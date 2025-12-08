@@ -42,7 +42,15 @@ if (not groups or #groups == 0) or shouldCheckStalled then
       local jobScore = redis.call("HGET", jobKey, "score")
       if jobScore then
         local gZ = ns .. ":g:" .. gid
-        redis.call("ZADD", gZ, tonumber(jobScore), jobId)
+        -- CRITICAL: Check if job is already in group set before re-adding
+        -- This prevents duplicate entries and ensures we only re-add if truly needed
+        local alreadyInGroup = redis.call("ZSCORE", gZ, jobId)
+        if not alreadyInGroup then
+          redis.call("ZADD", gZ, tonumber(jobScore), jobId)
+        end
+        -- CRITICAL: Reset status from "processing" to "waiting" when re-adding expired job
+        -- This prevents jobs from being stuck with "processing" status in the group set
+        redis.call("HSET", jobKey, "status", "waiting")
         local head = redis.call("ZRANGE", gZ, 0, 0, "WITHSCORES")
         if head and #head >= 2 then
           local headScore = tonumber(head[2])
@@ -104,6 +112,12 @@ for i = 1, #groups, 2 do
           chosenIndex = (i + 1) / 2 - 1
           -- Mark job as processing for accurate stalled detection and idempotency
           redis.call("HSET", headJobKey, "status", "processing")
+          
+          -- CRITICAL: Ensure job is removed from group set (defensive check)
+          -- This handles edge cases where job might still be in group set due to race conditions
+          -- or if ZPOPMIN didn't fully remove it (shouldn't happen, but be safe)
+          redis.call("ZREM", gZ, headJobId)
+          
           break
         end
       end
