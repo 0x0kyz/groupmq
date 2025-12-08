@@ -22,12 +22,23 @@ for _, jobId in ipairs(expiredJobs) do
       local jobScore = redis.call("HGET", jobKey, "score")
       if jobScore then
         local gZ = ns .. ":g:" .. gid
-        redis.call("ZADD", gZ, tonumber(jobScore), jobId)
+        -- CRITICAL: Check if job is already in group set before re-adding
+        -- This prevents duplicate entries and ensures we only re-add if truly needed
+        local alreadyInGroup = redis.call("ZSCORE", gZ, jobId)
+        if not alreadyInGroup then
+          redis.call("ZADD", gZ, tonumber(jobScore), jobId)
+        end
+        -- CRITICAL: Reset status from "processing" to "waiting" when re-adding expired job
+        -- This prevents jobs from being stuck with "processing" status in the group set
+        redis.call("HSET", jobKey, "status", "waiting")
         local head = redis.call("ZRANGE", gZ, 0, 0, "WITHSCORES")
         if head and #head >= 2 then
           local headScore = tonumber(head[2])
           redis.call("ZADD", readyKey, headScore, gid)
         end
+        -- Remove from group active list (BullMQ-style)
+        local groupActiveKey = ns .. ":g:" .. gid .. ":active"
+        redis.call("LREM", groupActiveKey, 1, jobId)
         redis.call("DEL", ns .. ":lock:" .. gid)
         redis.call("DEL", procKey)
         redis.call("ZREM", processingKey, jobId)
