@@ -1,3 +1,10 @@
+## [1.1.0-next.7](https://github.com/Openpanel-dev/groupmq/compare/v1.1.0-next.6...v1.1.0-next.7) (2025-12-08)
+
+
+### Bug Fixes
+
+* ensure no stuck jobs ([72b7165](https://github.com/Openpanel-dev/groupmq/commit/72b7165760477bb5aad0e3d29c80b44a123a7a12))
+
 ## [1.1.0-next.6](https://github.com/Openpanel-dev/groupmq/compare/v1.1.0-next.5...v1.1.0-next.6) (2025-11-09)
 
 
