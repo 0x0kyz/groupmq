@@ -1,3 +1,10 @@
+## [1.1.1-next.2](https://github.com/Openpanel-dev/groupmq/compare/v1.1.1-next.1...v1.1.1-next.2) (2025-12-09)
+
+
+### Bug Fixes
+
+* blocked groups (try 2) ([5191f8c](https://github.com/Openpanel-dev/groupmq/commit/5191f8c56ed6bd06e0e76fcd4beee05a85218089))
+
 ## [1.1.1-next.1](https://github.com/Openpanel-dev/groupmq/compare/v1.1.0...v1.1.1-next.1) (2025-12-08)
 
 
