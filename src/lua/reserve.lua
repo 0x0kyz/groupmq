@@ -56,6 +56,9 @@ if (not groups or #groups == 0) or shouldCheckStalled then
           local headScore = tonumber(head[2])
           redis.call("ZADD", readyKey, headScore, gid)
         end
+        -- Remove from group active list (BullMQ-style) - CRITICAL to unblock the group
+        local groupActiveKey = ns .. ":g:" .. gid .. ":active"
+        redis.call("LREM", groupActiveKey, 1, jobId)
         redis.call("DEL", ns .. ":lock:" .. gid)
         redis.call("DEL", procKey)
         redis.call("ZREM", processingKey, jobId)
@@ -165,6 +168,6 @@ if nextHead and #nextHead >= 2 then
   redis.call("ZADD", readyKey, nextScore, chosenGid)
 end
 
-return id .. "|||" .. groupId .. "|||" .. payload .. "|||" .. attempts .. "|||" .. maxAttempts .. "|||" .. seq .. "|||" .. enq .. "|||" .. orderMs .. "|||" .. score .. "|||" .. deadline
+return id .. "||GROUPMQ||" .. groupId .. "||GROUPMQ||" .. payload .. "||GROUPMQ||" .. attempts .. "||GROUPMQ||" .. maxAttempts .. "||GROUPMQ||" .. seq .. "||GROUPMQ||" .. enq .. "||GROUPMQ||" .. orderMs .. "||GROUPMQ||" .. score .. "||GROUPMQ||" .. deadline
 
 

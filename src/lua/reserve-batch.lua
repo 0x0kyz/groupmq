@@ -116,7 +116,7 @@ for i = 1, #groups, 2 do
               redis.call("ZADD", readyKey, nextScore, gid)
             end
 
-            table.insert(out, id .. "|||" .. groupId .. "|||" .. payload .. "|||" .. attempts .. "|||" .. maxAttempts .. "|||" .. seq .. "|||" .. enq .. "|||" .. orderMs .. "|||" .. score .. "|||" .. deadline)
+            table.insert(out, id .. "||GROUPMQ||" .. groupId .. "||GROUPMQ||" .. payload .. "||GROUPMQ||" .. attempts .. "||GROUPMQ||" .. maxAttempts .. "||GROUPMQ||" .. seq .. "||GROUPMQ||" .. enq .. "||GROUPMQ||" .. orderMs .. "||GROUPMQ||" .. score .. "||GROUPMQ||" .. deadline)
             table.insert(processedGroups, gid)
           end
         end

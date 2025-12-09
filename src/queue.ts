@@ -717,7 +717,7 @@ export class Queue<T = any> {
 
     if (!raw) return null;
 
-    const parts = raw.split('|||');
+    const parts = raw.split('||GROUPMQ||');
     if (parts.length !== 10) return null;
 
     let data: T;
@@ -857,7 +857,7 @@ export class Queue<T = any> {
       }
 
       // Parse the result (same format as reserve methods)
-      const parts = result.split('|||');
+      const parts = result.split('||GROUPMQ||');
       if (parts.length !== 10) {
         this.logger.error(
           'Queue completeAndReserveNextWithMetadata: unexpected result format:',
@@ -1503,7 +1503,7 @@ export class Queue<T = any> {
     if (!result) return null;
 
     // Parse the delimited string response (same format as regular reserve)
-    const parts = result.split('|||');
+    const parts = result.split('||GROUPMQ||');
     if (parts.length < 10) return null;
 
     const [
@@ -1549,7 +1549,7 @@ export class Queue<T = any> {
     const out: Array<ReservedJob<T>> = [];
     for (const r of results || []) {
       if (!r) continue;
-      const parts = r.split('|||');
+      const parts = r.split('||GROUPMQ||');
       if (parts.length !== 10) continue;
       out.push({
         id: parts[0],
