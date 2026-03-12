@@ -1,3 +1,20 @@
+## [2.0.0-next.1](https://github.com/Openpanel-dev/groupmq/compare/v1.1.1-next.2...v2.0.0-next.1) (2026-03-12)
+
+
+### ⚠ BREAKING CHANGES
+
+* remove features (delay, cron)
+
+### Features
+
+* reduce commands ([a17da27](https://github.com/Openpanel-dev/groupmq/commit/a17da27539999a0555bc81e5294cf736b80c9ec8))
+* remove features (delay, cron) ([b9c7bbb](https://github.com/Openpanel-dev/groupmq/commit/b9c7bbb0ad98c0c2814d24fa6b823cec1fa77972))
+
+
+### Bug Fixes
+
+* ensure simple path works correct ([d05165e](https://github.com/Openpanel-dev/groupmq/commit/d05165ec1223ecf8a29c50f61ad59775eb695f02))
+
 ## [1.1.1-next.2](https://github.com/Openpanel-dev/groupmq/compare/v1.1.1-next.1...v1.1.1-next.2) (2025-12-09)
 
 
