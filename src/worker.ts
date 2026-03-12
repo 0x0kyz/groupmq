@@ -174,21 +174,6 @@ export type WorkerOptions<T> = {
   cleanupIntervalMs?: number;
 
   /**
-   * Interval in milliseconds between scheduler operations.
-   * Scheduler promotes delayed jobs and processes cron/repeating jobs.
-   *
-   * @default 5000 (5 seconds)
-   * @example 1000 // For fast cron jobs (every minute or less)
-   * @example 10000 // For slow cron jobs (hourly or daily)
-   *
-   * **When to adjust:**
-   * - Fast cron jobs: Decrease (1000-2000ms) for sub-minute schedules
-   * - Slow cron jobs: Increase (10000-60000ms) to reduce Redis overhead
-   * - No cron jobs: Increase (5000-10000ms) since only delayed jobs are affected
-   */
-  schedulerIntervalMs?: number;
-
-  /**
    * Maximum time in seconds to wait for new jobs when queue is empty.
    * Shorter timeouts make workers more responsive but use more Redis resources.
    *
@@ -203,7 +188,7 @@ export type WorkerOptions<T> = {
    * - Resource constraints: Increase to 2-5s to reduce Redis load
    *
    * **Note:** The actual timeout is adaptive and can go as low as 1ms
-   * based on queue activity and delayed job schedules.
+   * based on queue activity.
    */
   blockingTimeoutSec?: number;
 
@@ -305,8 +290,6 @@ class _Worker<T = any> extends TypedEventEmitter<WorkerEvents<T>> {
   private enableCleanup: boolean;
   private cleanupMs: number;
   private cleanupTimer?: NodeJS.Timeout;
-  private schedulerTimer?: NodeJS.Timeout;
-  private schedulerMs: number;
   private blockingTimeoutSec: number;
   private concurrency: number;
   private blockingClient: import('ioredis').default | null = null;
@@ -357,10 +340,6 @@ class _Worker<T = any> extends TypedEventEmitter<WorkerEvents<T>> {
     this.backoff = opts.backoff ?? defaultBackoff;
     this.enableCleanup = opts.enableCleanup ?? true;
     this.cleanupMs = opts.cleanupIntervalMs ?? 60_000; // 1 minutes for high-concurrency production
-
-    // Scheduler interval for delayed jobs and cron jobs
-    const defaultSchedulerMs = 1000; // 1 second for responsive job processing
-    this.schedulerMs = opts.schedulerIntervalMs ?? defaultSchedulerMs;
 
     this.blockingTimeoutSec = opts.blockingTimeoutSec ?? 5; // 1s default for responsive job pickup (adaptive logic can go lower)
     // With AsyncFifoQueue, we can safely use atomic completion for all concurrency levels
@@ -490,7 +469,7 @@ class _Worker<T = any> extends TypedEventEmitter<WorkerEvents<T>> {
 
     // Start cleanup timer if enabled
     if (this.enableCleanup) {
-      // Cleanup timer: only runs cleanup, not scheduler
+      // Cleanup timer
       // Add jitter to prevent all workers from running cleanup simultaneously
       this.cleanupTimer = setInterval(async () => {
         try {
@@ -499,18 +478,6 @@ class _Worker<T = any> extends TypedEventEmitter<WorkerEvents<T>> {
           this.onError?.(err);
         }
       }, this.addJitter(this.cleanupMs));
-
-      // Scheduler timer: promotes delayed jobs and processes cron jobs
-      // Runs independently in the background, even when worker is blocked on BZPOPMIN
-      // Distributed lock ensures only one worker executes at a time
-      const schedulerInterval = Math.min(this.schedulerMs, this.cleanupMs);
-      this.schedulerTimer = setInterval(async () => {
-        try {
-          await this.q.runSchedulerOnce();
-        } catch (_err) {
-          // Ignore errors, this is best-effort
-        }
-      }, this.addJitter(schedulerInterval));
     }
 
     // Start stalled job checker for automatic recovery
@@ -545,7 +512,20 @@ class _Worker<T = any> extends TypedEventEmitter<WorkerEvents<T>> {
             `Fetching job (call #${this.blockingStats.totalBlockingCalls}, processing: ${this.jobsInProgress.size}/${this.concurrency}, queue: ${asyncFifoQueue.numTotal()} (queued: ${asyncFifoQueue.numQueued()}, pending: ${asyncFifoQueue.numPending()}), total: ${asyncFifoQueue.numTotal()}/${this.concurrency})...`,
           );
 
-          // Try batch reserve first for better efficiency
+          // Try simple reserve first (fastest path for non-grouped jobs)
+          const simpleJob = await this.q.reserveSimple();
+          if (simpleJob) {
+            this.logger.debug(`Simple reserved job ${simpleJob.id}`);
+            asyncFifoQueue.add(Promise.resolve(simpleJob));
+            connectionRetries = 0;
+            this.lastJobPickupTime = Date.now();
+            this.blockingStats.consecutiveEmptyReserves = 0;
+            this.blockingStats.lastActivityTime = Date.now();
+            this.emptyReserveBackoffMs = 0;
+            continue; // Skip grouped reserve
+          }
+
+          // Try batch reserve for grouped jobs
           // Use batch reserve even for concurrency=1 since it's more efficient than blocking+atomic
           // But limit batch size to available concurrency capacity
           // Only batch reserve when queue is empty (process existing jobs first)
@@ -586,7 +566,6 @@ class _Worker<T = any> extends TypedEventEmitter<WorkerEvents<T>> {
           const fetchedJob = allowBlocking
             ? this.q.reserveBlocking(
                 adaptiveTimeout,
-                undefined, // blockUntil removed (was always 0, dead code)
                 this.blockingClient ?? undefined,
               )
             : this.q.reserve();
@@ -979,10 +958,6 @@ class _Worker<T = any> extends TypedEventEmitter<WorkerEvents<T>> {
 
     if (this.cleanupTimer) {
       clearInterval(this.cleanupTimer);
-    }
-
-    if (this.schedulerTimer) {
-      clearInterval(this.schedulerTimer);
     }
 
     if (this.stalledCheckTimer) {

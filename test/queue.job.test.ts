@@ -37,7 +37,6 @@ describe('Job Tests', () => {
     expect(job.orderMs).toBeDefined();
     expect(job.attemptsMade).toBe(0);
     expect(job.opts.attempts).toBe(3);
-    expect(job.opts.delay).toBeUndefined();
 
     const worker = new Worker({
       queue: q,
@@ -150,35 +149,6 @@ describe('Job Tests', () => {
     await redis.quit();
   });
 
-  it('should promote a delayed job and process it immediately', async () => {
-    const redis = new Redis(REDIS_URL);
-    const q = new Queue<{ n: number }>({
-      redis,
-      namespace: `${namespace}:promote`,
-    });
-
-    const job = await q.add({ groupId: 'g1', data: { n: 1 }, delay: 60_000 });
-
-    let seen: { n: number } | null = null;
-    const worker = new Worker<{ n: number }>({
-      queue: q,
-      handler: async (reserved) => {
-        seen = reserved.data;
-        return 'ok';
-      },
-    });
-    worker.run();
-
-    // Promote to run now
-    await q.promote(job.id);
-    await q.waitForEmpty();
-
-    expect(seen).toEqual({ n: 1 });
-
-    await worker.close();
-    await redis.quit();
-  });
-
   it('should remove a waiting job and not process it', async () => {
     const redis = new Redis(REDIS_URL);
     const q = new Queue<{ n: number }>({
@@ -251,5 +221,8 @@ describe('Job Tests', () => {
     expect(
       (failedJob.finishedOn as number) >= (failedJob.processedOn as number),
     ).toBe(true);
+
+    await worker.close();
+    await redis.quit();
   });
 });

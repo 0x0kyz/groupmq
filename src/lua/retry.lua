@@ -27,7 +27,8 @@ redis.call("ZADD", gZ, score, jobId)
 
 -- If backoffMs > 0, delay the retry
 if backoffMs > 0 then
-  local now = tonumber(redis.call("TIME")[1]) * 1000
+  local t = redis.call("TIME")
+  local now = tonumber(t[1]) * 1000 + math.floor(tonumber(t[2]) / 1000)
   local delayUntil = now + backoffMs
   
   -- Move to delayed set

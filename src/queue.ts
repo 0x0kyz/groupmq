@@ -1,5 +1,4 @@
 import { randomUUID } from 'node:crypto';
-import CronParser from 'cron-parser';
 import type Redis from 'ioredis';
 import { type Job, Job as JobEntity } from './job';
 import { Logger, type LoggerInterface } from './logger';
@@ -122,16 +121,6 @@ export type QueueOptions = {
   keepFailed?: number;
 
   /**
-   * TTL for scheduler lock in milliseconds.
-   * Prevents multiple schedulers from running simultaneously.
-   *
-   * @default 1500
-   * @example 3000 // 3 seconds for slower environments
-   * @example 1000 // 1 second for faster environments
-   */
-  schedulerLockTtlMs?: number;
-
-  /**
    * Ordering delay in milliseconds. When set, jobs with orderMs will be staged
    * and promoted only after orderMs + orderingDelayMs to ensure proper ordering
    * even when producers are out of sync.
@@ -194,40 +183,6 @@ export type QueueOptions = {
 };
 
 /**
- * Configuration for repeating jobs
- */
-export type RepeatOptions =
-  | {
-      /**
-       * Repeat interval in milliseconds. Job will be created every N milliseconds.
-       *
-       * @example 60000 // Every minute
-       * @example 3600000 // Every hour
-       * @example 86400000 // Every day
-       *
-       * When to use:
-       * - Simple intervals: Use for regular, predictable schedules
-       * - High frequency: Good for sub-hour intervals
-       * - Performance: More efficient than cron for simple intervals
-       */
-      every: number;
-    }
-  | {
-      /**
-       * Cron pattern for complex scheduling. Uses standard cron syntax with seconds.
-       * Format: second minute hour day month dayOfWeek
-       *
-       * When to use:
-       * - Complex schedules: Business hours, specific days, etc.
-       * - Low frequency: Good for daily, weekly, monthly schedules
-       * - Business logic: Align with business requirements
-       *
-       * Cron format uses standard syntax with seconds precision.
-       */
-      pattern: string;
-    };
-
-/**
  * Options for adding a job to the queue
  *
  * @template T The type of data to store in the job
@@ -236,17 +191,19 @@ export type AddOptions<T> = {
   /**
    * Group ID for this job. Jobs with the same groupId are processed sequentially (FIFO).
    * Only one job per group can be processed at a time.
+   * If omitted or empty string, job uses fast simple queue (no group locking, faster).
    *
    * @example 'user-123' // All jobs for user 123
    * @example 'email-notifications' // All email jobs
-   * @example 'order-processing' // All order-related jobs
+   * @example undefined // Fast path for non-grouped events
    *
    * **Best practices:**
-   * - Use meaningful group IDs (user ID, resource ID, etc.)
+   * - Use meaningful group IDs (user ID, resource ID, etc.) when ordering matters
+   * - Omit groupId for events that don't need ordering guarantees (faster)
    * - Keep group IDs consistent for related jobs
    * - Avoid too many unique groups (can impact performance)
    */
-  groupId: string;
+  groupId?: string;
 
   /**
    * The data payload for this job. Can be any serializable data.
@@ -287,47 +244,6 @@ export type AddOptions<T> = {
    * - External API calls: Consider API reliability
    */
   maxAttempts?: number;
-
-  /**
-   * Delay in milliseconds before this job becomes available for processing.
-   * Alternative to using orderMs for simple delays.
-   *
-   * @example 5000 // Process after 5 seconds
-   * @example 300000 // Process after 5 minutes
-   *
-   * **When to use:**
-   * - Simple delays: Use delay instead of orderMs
-   * - Rate limiting: Delay jobs to spread load
-   * - Retry backoff: Delay retry attempts
-   */
-  delay?: number;
-
-  /**
-   * Specific time when this job should be processed.
-   * Can be a Date object or timestamp in milliseconds.
-   *
-   * @example new Date('2024-01-01T12:00:00Z')
-   * @example Date.now() + 3600000 // 1 hour from now
-   *
-   * **When to use:**
-   * - Scheduled processing: Process at specific time
-   * - Business hours: Schedule during working hours
-   * - Maintenance windows: Schedule during low-traffic periods
-   */
-  runAt?: Date | number;
-
-  /**
-   * Configuration for repeating jobs (cron or interval-based).
-   * Creates a repeating job that generates new instances automatically.
-   *
-   * @example { every: 60000 } // Every minute
-   *
-   * When to use:
-   * - Periodic tasks: Regular cleanup, reports, etc.
-   * - Monitoring: Health checks, metrics collection
-   * - Maintenance: Regular database cleanup, cache warming
-   */
-  repeat?: RepeatOptions;
 
   /**
    * Custom job ID for idempotence. If a job with this ID already exists,
@@ -381,7 +297,6 @@ export class Queue<T = any> {
   private keepCompleted: number;
 
   private keepFailed: number;
-  private schedulerLockTtlMs: number;
   public orderingDelayMs: number;
   public name: string;
 
@@ -393,15 +308,15 @@ export class Queue<T = any> {
   private promoterRunning = false;
   private promoterLockId?: string;
   private promoterInterval?: NodeJS.Timeout;
+  private promoterBackoffMs = 100;
 
   // Auto-batching for high-throughput scenarios
   private batchConfig?: { size: number; maxWaitMs: number };
   private batchBuffer: Array<{
-    groupId: string;
+    groupId?: string;
     data: T | null;
     jobId: string;
     maxAttempts: number;
-    delayMs?: number;
     orderMs?: number;
     resolve: (job: Job<T>) => void;
     reject: (err: Error) => void;
@@ -424,7 +339,6 @@ export class Queue<T = any> {
     this.scanLimit = opts.reserveScanLimit ?? 20;
     this.keepCompleted = Math.max(0, opts.keepCompleted ?? 0);
     this.keepFailed = Math.max(0, opts.keepFailed ?? 0);
-    this.schedulerLockTtlMs = opts.schedulerLockTtlMs ?? 1500;
     this.orderingDelayMs = opts.orderingDelayMs ?? 0;
 
     // Initialize auto-batching if enabled
@@ -472,23 +386,7 @@ export class Queue<T = any> {
   async add(opts: AddOptions<T>): Promise<JobEntity<T>> {
     const maxAttempts = opts.maxAttempts ?? this.defaultMaxAttempts;
     const orderMs = opts.orderMs ?? Date.now();
-    const now = Date.now();
     const jobId = opts.jobId ?? randomUUID();
-
-    if (opts.repeat) {
-      // Keep existing behavior for repeating jobs (returns a repeat key string)
-      return this.addRepeatingJob({ ...opts, orderMs, maxAttempts });
-    }
-
-    // Calculate delay
-    let delayMs: number | undefined;
-    if (opts.delay !== undefined && opts.delay > 0) {
-      delayMs = opts.delay;
-    } else if (opts.runAt !== undefined) {
-      const runAtTimestamp =
-        opts.runAt instanceof Date ? opts.runAt.getTime() : opts.runAt;
-      delayMs = Math.max(0, runAtTimestamp - now);
-    }
 
     // Handle undefined data by converting to null for consistent JSON serialization
     const data = opts.data === undefined ? null : (opts.data as T);
@@ -501,7 +399,6 @@ export class Queue<T = any> {
           data,
           jobId,
           maxAttempts,
-          delayMs,
           orderMs,
           resolve,
           reject,
@@ -527,38 +424,82 @@ export class Queue<T = any> {
       jobId,
       maxAttempts,
       orderMs,
-      delayMs,
     });
   }
 
   private async addSingle(opts: {
-    groupId: string;
+    groupId?: string;
     data: T | null;
     jobId: string;
     maxAttempts: number;
     orderMs: number;
-    delayMs?: number;
   }): Promise<JobEntity<T>> {
-    const now = Date.now();
-
-    // Calculate delay timestamp
-    let delayUntil = 0;
-    if (opts.delayMs !== undefined && opts.delayMs > 0) {
-      delayUntil = now + opts.delayMs;
-    }
 
     const serializedPayload = JSON.stringify(opts.data);
 
+    // Use simple enqueue for non-grouped jobs (faster path)
+    if (!opts.groupId || opts.groupId === '') {
+      const now = Date.now();
+      const result = await evalScript<string[] | string>(
+        this.r,
+        'enqueue-simple',
+        [
+          this.ns,
+          String(opts.jobId),
+          serializedPayload,
+          String(opts.orderMs),
+          String(opts.maxAttempts),
+          String(this.keepCompleted),
+          String(now),
+        ],
+        1,
+      );
+
+      if (Array.isArray(result)) {
+        const [
+          returnedJobId,
+          returnedGroupId,
+          returnedData,
+          attempts,
+          returnedMaxAttempts,
+          timestamp,
+          returnedOrderMs,
+          returnedDelayUntil,
+          status,
+        ] = result;
+
+        return JobEntity.fromRawHash<T>(
+          this,
+          returnedJobId,
+          {
+            id: returnedJobId,
+            groupId: returnedGroupId || '',
+            data: returnedData,
+            attempts,
+            maxAttempts: returnedMaxAttempts,
+            timestamp,
+            orderMs: returnedOrderMs,
+            delayUntil: returnedDelayUntil,
+            status,
+          },
+          status as any,
+        );
+      }
+
+      return this.getJob(result);
+    }
+
+    // Grouped job path (with staging support)
+    const now = Date.now();
     const result = await evalScript<string[] | string>(
       this.r,
       'enqueue',
       [
         this.ns,
-        opts.groupId,
+        opts.groupId!,
         serializedPayload,
         String(opts.maxAttempts),
         String(opts.orderMs),
-        String(delayUntil),
         String(opts.jobId),
         String(this.keepCompleted),
         String(now), // Pass client timestamp for accurate timing calculations
@@ -628,7 +569,6 @@ export class Queue<T = any> {
         data: JSON.stringify(job.data),
         maxAttempts: job.maxAttempts,
         orderMs: job.orderMs,
-        delayMs: job.delayMs,
       }));
 
       // Call batch enqueue Lua script
@@ -703,6 +643,53 @@ export class Queue<T = any> {
         setImmediate(() => this.flushBatch());
       }
     }
+  }
+
+  /**
+   * Reserve a job from the simple queue (non-grouped jobs, faster path)
+   */
+  async reserveSimple(): Promise<ReservedJob<T> | null> {
+    const now = Date.now();
+
+    const raw = await evalScript<string | null>(
+      this.r,
+      'reserve-simple',
+      [this.ns, String(now), String(this.vt)],
+      1,
+    );
+
+    if (!raw) return null;
+
+    const parts = raw.split('||GROUPMQ||');
+    if (parts.length !== 10) return null;
+
+    let data: T;
+    try {
+      data = JSON.parse(parts[2]);
+    } catch (err) {
+      this.logger.warn(
+        `Failed to parse job data: ${(err as Error).message}, raw: ${parts[2]}`,
+      );
+      data = null as T;
+    }
+
+    const parsedOrderMs = Number.parseInt(parts[7], 10);
+    const job = {
+      id: parts[0],
+      groupId: parts[1] || '', // Empty for simple jobs
+      data,
+      attempts: Number.parseInt(parts[3], 10),
+      maxAttempts: Number.parseInt(parts[4], 10),
+      seq: Number.parseInt(parts[5], 10),
+      timestamp: Number.parseInt(parts[6], 10),
+      orderMs: Number.isNaN(parsedOrderMs)
+        ? Number.parseInt(parts[6], 10)
+        : parsedOrderMs,
+      score: Number(parts[8]),
+      deadlineAt: Number.parseInt(parts[9], 10),
+    } as ReservedJob<T>;
+
+    return job;
   }
 
   async reserve(): Promise<ReservedJob<T> | null> {
@@ -1272,11 +1259,10 @@ export class Queue<T = any> {
 
   /**
    * Clean up expired jobs and stale data.
-   * Uses distributed lock to ensure only one worker runs cleanup at a time,
-   * similar to scheduler lock pattern.
+   * Uses distributed lock to ensure only one worker runs cleanup at a time.
    */
   async cleanup(): Promise<number> {
-    // Try to acquire cleanup lock (similar to scheduler lock)
+    // Try to acquire cleanup lock
     const cleanupLockKey = `${this.ns}:cleanup:lock`;
     const ttlMs = 60000; // 60 seconds - longer than typical cleanup duration
 
@@ -1308,24 +1294,9 @@ export class Queue<T = any> {
    *
    * Inspiration by BullMQ ⭐️
    */
-  private getBlockTimeout(maxTimeout: number, blockUntil?: number): number {
+  private getBlockTimeout(maxTimeout: number): number {
     const minimumBlockTimeout = 0.001; // 1ms like BullMQ for fast job pickup
     const maximumBlockTimeout = 5; // 5s max to reduce idle CPU usage
-
-    // Handle delayed jobs case (when we know exactly when next job should be processed)
-    if (blockUntil) {
-      const blockDelay = blockUntil - Date.now();
-
-      // If we've reached the time to get new jobs
-      if (blockDelay <= 0) {
-        return minimumBlockTimeout; // Process immediately
-      } else if (blockDelay < minimumBlockTimeout * 1000) {
-        return minimumBlockTimeout; // Very short delay, use minimum
-      } else {
-        // Block until the delayed job is ready, but cap at maximum
-        return Math.min(blockDelay / 1000, maximumBlockTimeout);
-      }
-    }
 
     // Use maxTimeout when draining (similar to BullMQ's drainDelay), but clamp to minimum
     // This keeps the worker responsive while balancing Redis load
@@ -1351,7 +1322,6 @@ export class Queue<T = any> {
 
   async reserveBlocking(
     timeoutSec = 5,
-    blockUntil?: number,
     blockingClient?: import('ioredis').default,
   ): Promise<ReservedJob<T> | null> {
     const startTime = Date.now();
@@ -1380,8 +1350,22 @@ export class Queue<T = any> {
       }
     }
 
-    // Use BullMQ-style adaptive timeout with delayed job consideration
-    const adaptiveTimeout = this.getBlockTimeout(timeoutSec, blockUntil);
+    // Use BullMQ-style adaptive timeout, but cap to next delayed job's due time
+    // so we don't block for the full timeout when a retried job is pending
+    let adaptiveTimeout = this.getBlockTimeout(timeoutSec);
+    const nextDelayed = await this.r.zrange(
+      nsKey(this.ns, 'delayed'),
+      0,
+      0,
+      'WITHSCORES',
+    );
+    if (nextDelayed.length >= 2) {
+      const msUntilDue = Math.max(0, Number(nextDelayed[1]) - Date.now());
+      const secUntilDue = Math.max(0.001, msUntilDue / 1000);
+      if (secUntilDue < adaptiveTimeout) {
+        adaptiveTimeout = secUntilDue;
+      }
+    }
 
     // Only log blocking operations every 10th time to reduce spam
     if (this._consecutiveEmptyReserves % 10 === 0) {
@@ -1432,7 +1416,7 @@ export class Queue<T = any> {
         // Reset consecutive empty reserves counter
         this._consecutiveEmptyReserves = 0;
       } else {
-        this.logger.warn(
+        this.logger.debug(
           `Blocking found group but reserve failed: group=${groupId} (reserve took ${reserveDuration}ms)`,
         );
 
@@ -1450,7 +1434,7 @@ export class Queue<T = any> {
             );
           } else {
             // Group is empty (poisoned), don't restore it
-            this.logger.warn(
+            this.logger.debug(
               `Not restoring empty group ${groupId} - preventing poisoned group loop`,
             );
           }
@@ -1582,13 +1566,6 @@ export class Queue<T = any> {
   }
 
   /**
-   * Get the number of jobs delayed due to backoff
-   */
-  async getDelayedCount(): Promise<number> {
-    return evalScript<number>(this.r, 'get-delayed-count', [this.ns], 1);
-  }
-
-  /**
    * Get list of active job IDs
    */
   async getActiveJobs(): Promise<string[]> {
@@ -1600,13 +1577,6 @@ export class Queue<T = any> {
    */
   async getWaitingJobs(): Promise<string[]> {
     return evalScript<string[]>(this.r, 'get-waiting-jobs', [this.ns], 1);
-  }
-
-  /**
-   * Get list of delayed job IDs
-   */
-  async getDelayedJobs(): Promise<string[]> {
-    return evalScript<string[]>(this.r, 'get-delayed-jobs', [this.ns], 1);
   }
 
   /**
@@ -1670,9 +1640,6 @@ export class Queue<T = any> {
 
     if (statuses.has('active')) {
       await pushZRange(`${this.ns}:processing`, 'active');
-    }
-    if (statuses.has('delayed')) {
-      await pushZRange(`${this.ns}:delayed`, 'delayed');
     }
     if (statuses.has('completed')) {
       await pushZRange(`${this.ns}:completed`, 'completed', true);
@@ -1776,10 +1743,9 @@ export class Queue<T = any> {
       number
     >
   > {
-    const [active, waiting, delayed, completed, failed] = await Promise.all([
+    const [active, waiting, completed, failed] = await Promise.all([
       this.getActiveCount(),
       this.getWaitingCount(),
-      this.getDelayedCount(),
       this.getCompletedCount(),
       this.getFailedCount(),
     ]);
@@ -1787,7 +1753,7 @@ export class Queue<T = any> {
     return {
       active,
       waiting,
-      delayed,
+      delayed: 0,
       completed,
       failed,
       paused: 0,
@@ -1867,14 +1833,32 @@ export class Queue<T = any> {
       // Handle expiration events
       this.promoterRedis.on('message', async (channel, message) => {
         if (channel === expiredChannel && message === timerKey) {
-          await this.runPromotion();
+          const promoted = await this.runPromotion();
+          if (promoted > 0) {
+            this.promoterBackoffMs = 100;
+          }
         }
       });
 
-      // Fallback: polling interval (100ms) in case keyspace notifications fail
-      this.promoterInterval = setInterval(async () => {
-        await this.runPromotion();
-      }, 100);
+      // Fallback: adaptive polling in case keyspace notifications miss events.
+      // Backs off up to 5s when idle, resets to 100ms when jobs are found.
+      this.promoterBackoffMs = 100;
+      const schedulePromoterPoll = () => {
+        this.promoterInterval = setTimeout(async () => {
+          if (!this.promoterRunning) return;
+          const promoted = await this.runPromotion();
+          if (promoted > 0) {
+            this.promoterBackoffMs = 100;
+          } else {
+            this.promoterBackoffMs = Math.min(
+              Math.ceil(this.promoterBackoffMs * 1.5),
+              5000,
+            );
+          }
+          schedulePromoterPoll();
+        }, this.promoterBackoffMs);
+      };
+      schedulePromoterPoll();
 
       // Initial promotion check
       await this.runPromotion();
@@ -1888,11 +1872,12 @@ export class Queue<T = any> {
   }
 
   /**
-   * Run a single promotion cycle with distributed locking
+   * Run a single promotion cycle with distributed locking.
+   * Returns the number of jobs promoted (used for adaptive backoff).
    */
-  private async runPromotion(): Promise<void> {
+  private async runPromotion(): Promise<number> {
     if (!this.promoterRunning) {
-      return;
+      return 0;
     }
 
     const lockKey = `${this.ns}:promoter:lock`;
@@ -1925,6 +1910,7 @@ export class Queue<T = any> {
           if (promoted > 0) {
             this.logger.debug(`Promoted ${promoted} staged jobs`);
           }
+          return promoted ?? 0;
         } finally {
           // Release lock (only if it's still ours)
           const currentLockValue = await this.r.get(lockKey);
@@ -1936,6 +1922,7 @@ export class Queue<T = any> {
     } catch (err) {
       this.logger.error('Error during promotion:', err);
     }
+    return 0;
   }
 
   /**
@@ -1946,9 +1933,9 @@ export class Queue<T = any> {
 
     this.promoterRunning = false;
 
-    // Clear interval
+    // Clear pending poll timeout
     if (this.promoterInterval) {
-      clearInterval(this.promoterInterval);
+      clearTimeout(this.promoterInterval);
       this.promoterInterval = undefined;
     }
 
@@ -2112,193 +2099,10 @@ export class Queue<T = any> {
     }
   }
 
-  /**
-   * Distributed one-shot scheduler: promotes delayed jobs and processes repeating jobs.
-   * Only proceeds if a short-lived scheduler lock can be acquired.
-   */
-  private schedulerLockKey(): string {
-    return `${this.ns}:sched:lock`;
-  }
 
-  async acquireSchedulerLock(ttlMs = 1500): Promise<boolean> {
-    try {
-      const res = (await (this.r as any).set(
-        this.schedulerLockKey(),
-        '1',
-        'PX',
-        ttlMs,
-        'NX',
-      )) as string | null;
-      return res === 'OK';
-    } catch (_e) {
-      return false;
-    }
-  }
-
-  async runSchedulerOnce(now = Date.now()): Promise<void> {
-    const ok = await this.acquireSchedulerLock(this.schedulerLockTtlMs);
-    if (!ok) return;
-    // Reduced limits for faster execution: process a few jobs per tick instead of hundreds
-    await this.promoteDelayedJobsBounded(32, now);
-    await this.processRepeatingJobsBounded(16, now);
-  }
 
   /**
-   * Promote up to `limit` delayed jobs that are due now. Uses a small Lua to move one item per tick.
-   */
-  async promoteDelayedJobsBounded(
-    limit = 256,
-    now = Date.now(),
-  ): Promise<number> {
-    let moved = 0;
-    for (let i = 0; i < limit; i++) {
-      try {
-        const n = await evalScript<number>(
-          this.r,
-          'promote-delayed-one',
-          [this.ns, String(now)],
-          1,
-        );
-        if (!n || n <= 0) break;
-        moved += n;
-      } catch (_e) {
-        break;
-      }
-    }
-    return moved;
-  }
-
-  /**
-   * Process up to `limit` repeating job ticks.
-   * Intentionally small per-tick work to keep Redis CPU flat.
-   */
-  async processRepeatingJobsBounded(
-    limit = 128,
-    now = Date.now(),
-  ): Promise<number> {
-    const scheduleKey = `${this.ns}:repeat:schedule`;
-    let processed = 0;
-    for (let i = 0; i < limit; i++) {
-      // Get one due entry
-      const due = await this.r.zrangebyscore(
-        scheduleKey,
-        0,
-        now,
-        'LIMIT',
-        0,
-        1,
-      );
-      if (!due || due.length === 0) break;
-      const repeatKey = due[0];
-
-      try {
-        const repeatJobKey = `${this.ns}:repeat:${repeatKey}`;
-        const repeatJobDataStr = await this.r.get(repeatJobKey);
-
-        if (!repeatJobDataStr) {
-          await this.r.zrem(scheduleKey, repeatKey);
-          continue;
-        }
-
-        const repeatJobData = JSON.parse(repeatJobDataStr);
-        if (repeatJobData.removed) {
-          await this.r.zrem(scheduleKey, repeatKey);
-          await this.r.del(repeatJobKey);
-          continue;
-        }
-
-        // Remove from schedule first to prevent duplicates
-        await this.r.zrem(scheduleKey, repeatKey);
-
-        // Compute next run
-        let nextRunTime: number;
-        if ('every' in repeatJobData.repeat) {
-          nextRunTime = now + repeatJobData.repeat.every;
-        } else {
-          nextRunTime = this.getNextCronTime(repeatJobData.repeat.pattern, now);
-        }
-
-        repeatJobData.nextRunTime = nextRunTime;
-        repeatJobData.lastRunTime = now;
-        await this.r.set(repeatJobKey, JSON.stringify(repeatJobData));
-        await this.r.zadd(scheduleKey, nextRunTime, repeatKey);
-
-        // Enqueue the instance
-        await evalScript<string>(
-          this.r,
-          'enqueue',
-          [
-            this.ns,
-            repeatJobData.groupId,
-            JSON.stringify(repeatJobData.data),
-            String(repeatJobData.maxAttempts ?? this.defaultMaxAttempts),
-            String(repeatJobData.orderMs ?? now),
-            String(0),
-            String(randomUUID()),
-            String(this.keepCompleted),
-          ],
-          1,
-        );
-
-        processed++;
-      } catch (error) {
-        this.logger.error(
-          `Error processing repeating job ${repeatKey}:`,
-          error,
-        );
-        await this.r.zrem(scheduleKey, repeatKey);
-      }
-    }
-    return processed;
-  }
-
-  /**
-   * Promote delayed jobs that are now ready to be processed
-   * This should be called periodically to move jobs from delayed set to ready queue
-   */
-  async promoteDelayedJobs(): Promise<number> {
-    try {
-      return await evalScript<number>(
-        this.r,
-        'promote-delayed-jobs',
-        [this.ns, String(Date.now())],
-        1,
-      );
-    } catch (error) {
-      this.logger.error(`Error promoting delayed jobs:`, error);
-      return 0;
-    }
-  }
-
-  /**
-   * Change the delay of a specific job
-   */
-  async changeDelay(jobId: string, newDelay: number): Promise<boolean> {
-    const newDelayUntil = newDelay > 0 ? Date.now() + newDelay : 0;
-
-    try {
-      const result = await evalScript<number>(
-        this.r,
-        'change-delay',
-        [this.ns, jobId, String(newDelayUntil), String(Date.now())],
-        1,
-      );
-      return result === 1;
-    } catch (error) {
-      this.logger.error(`Error changing delay for job ${jobId}:`, error);
-      return false;
-    }
-  }
-
-  /**
-   * Promote a delayed job to be ready immediately
-   */
-  async promote(jobId: string): Promise<boolean> {
-    return this.changeDelay(jobId, 0);
-  }
-
-  /**
-   * Remove a job from the queue regardless of state (waiting, delayed, processing)
+   * Remove a job from the queue regardless of state (waiting, processing)
    */
   async remove(jobId: string): Promise<boolean> {
     try {
@@ -2324,7 +2128,7 @@ export class Queue<T = any> {
   async clean(
     graceTimeMs: number,
     limit: number,
-    status: 'completed' | 'failed' | 'delayed',
+    status: 'completed' | 'failed',
   ): Promise<number> {
     const graceAt = Date.now() - graceTimeMs;
     try {
@@ -2361,159 +2165,6 @@ export class Queue<T = any> {
     await this.r.hset(jobKey, 'data', serialized);
   }
 
-  /**
-   * Add a repeating job (cron job)
-   */
-  private async addRepeatingJob(opts: AddOptions<T>): Promise<JobEntity> {
-    if (!opts.repeat) {
-      throw new Error('Repeat options are required for repeating jobs');
-    }
-
-    const now = Date.now();
-    // Make repeatKey unique by including a timestamp and random component
-    const repeatKey = `${opts.groupId}:${JSON.stringify(opts.repeat)}:${now}:${Math.random().toString(36).slice(2)}`;
-
-    // Calculate next run time
-    let nextRunTime: number;
-
-    if ('every' in opts.repeat) {
-      // Simple interval-based repeat
-      nextRunTime = now + opts.repeat.every;
-    } else {
-      // Cron pattern-based repeat
-      nextRunTime = this.getNextCronTime(opts.repeat.pattern, now);
-    }
-
-    // Store repeating job metadata
-    const repeatJobData = {
-      groupId: opts.groupId,
-      data: opts.data === undefined ? null : opts.data,
-      maxAttempts: opts.maxAttempts ?? this.defaultMaxAttempts,
-      orderMs: opts.orderMs,
-      repeat: opts.repeat,
-      nextRunTime,
-      lastRunTime: null as number | null,
-      removed: false, // Track if this repeat job has been removed
-    };
-
-    // Store in Redis (metadata JSON)
-    const repeatJobKey = `${this.ns}:repeat:${repeatKey}`;
-    await this.r.set(repeatJobKey, JSON.stringify(repeatJobData));
-
-    // Add to repeating jobs sorted set for efficient scheduling
-    await this.r.zadd(`${this.ns}:repeat:schedule`, nextRunTime, repeatKey);
-
-    // Create a reverse mapping for easier removal
-    const lookupKey = `${this.ns}:repeat:lookup:${opts.groupId}:${JSON.stringify(opts.repeat)}`;
-    await this.r.set(lookupKey, repeatKey);
-
-    // Persist a synthetic Job entity for this repeating definition so that
-    // Queue.add consistently returns a Job. Use a special repeat id namespace.
-    const repeatId = `repeat:${repeatKey}`;
-    const jobHashKey = `${this.ns}:job:${repeatId}`;
-    try {
-      await this.r.hmset(
-        jobHashKey,
-        'id',
-        repeatId,
-        'groupId',
-        repeatJobData.groupId,
-        'data',
-        JSON.stringify(repeatJobData.data),
-        'attempts',
-        '0',
-        'maxAttempts',
-        String(repeatJobData.maxAttempts),
-        'seq',
-        '0',
-        'timestamp',
-        String(Date.now()),
-        'orderMs',
-        String(repeatJobData.orderMs ?? now),
-        'status',
-        'waiting',
-      );
-    } catch (_e) {
-      // best-effort; even if this fails, the repeat metadata exists
-    }
-
-    // Don't schedule the first job immediately - let the cron processor handle it
-    // Return the persisted Job entity handle for the repeating definition
-    return JobEntity.fromStore<T>(this as any, repeatId);
-  }
-
-  /**
-   * Compute next execution time using cron-parser (BullMQ-style)
-   */
-  private getNextCronTime(pattern: string, fromTime: number): number {
-    try {
-      const interval = CronParser.parseExpression(pattern, {
-        currentDate: new Date(fromTime),
-      });
-      return interval.next().getTime();
-    } catch (_e) {
-      throw new Error(`Invalid cron pattern: ${pattern}`);
-    }
-  }
-
-  /**
-   * Remove a repeating job
-   */
-  async removeRepeatingJob(
-    groupId: string,
-    repeat: RepeatOptions,
-  ): Promise<boolean> {
-    try {
-      // Use the lookup key to find the actual repeatKey
-      const lookupKey = `${this.ns}:repeat:lookup:${groupId}:${JSON.stringify(repeat)}`;
-      const repeatKey = await this.r.get(lookupKey);
-
-      if (!repeatKey) {
-        // No such repeating job exists
-        return false;
-      }
-
-      const repeatJobKey = `${this.ns}:repeat:${repeatKey}`;
-      const scheduleKey = `${this.ns}:repeat:schedule`;
-
-      // Get the repeat job data before modifying
-      const repeatJobDataStr = await this.r.get(repeatJobKey);
-
-      if (!repeatJobDataStr) {
-        // Clean up orphaned lookup
-        await this.r.del(lookupKey);
-        return false;
-      }
-
-      const repeatJobData = JSON.parse(repeatJobDataStr);
-
-      // Mark as removed to prevent future scheduling
-      repeatJobData.removed = true;
-      await this.r.set(repeatJobKey, JSON.stringify(repeatJobData));
-
-      // Remove from future schedule (but keep the metadata for cleanup)
-      await this.r.zrem(scheduleKey, repeatKey);
-
-      // Clean up the lookup key
-      await this.r.del(lookupKey);
-
-      // Note: Cleanup of existing job instances is best-effort and not critical.
-      // Jobs will naturally complete or be cleaned up by the retention policies.
-
-      // Remove the synthetic repeat job hash persisted at creation time
-      try {
-        const repeatId = `repeat:${repeatKey}`;
-        await this.r.del(`${this.ns}:job:${repeatId}`);
-      } catch (_e) {
-        // best-effort cleanup
-      }
-
-      return true;
-    } catch (error) {
-      this.logger.error(`Error removing repeating job:`, error);
-      return false;
-    }
-  }
 }
 
 function sleep(ms: number): Promise<void> {

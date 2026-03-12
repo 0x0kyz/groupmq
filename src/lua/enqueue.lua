@@ -1,17 +1,15 @@
--- argv: ns, groupId, dataJson, maxAttempts, orderMs, delayUntil, jobId, keepCompleted, clientTimestamp, orderingDelayMs
+-- argv: ns, groupId, dataJson, maxAttempts, orderMs, jobId, keepCompleted, clientTimestamp, orderingDelayMs
 local ns = KEYS[1]
 local groupId = ARGV[1]
 local data = ARGV[2]
 local maxAttempts = tonumber(ARGV[3])
 local orderMs = tonumber(ARGV[4])
-local delayUntil = tonumber(ARGV[5])
-local jobId = ARGV[6]
-local keepCompleted = tonumber(ARGV[7]) or 0
-local clientTimestamp = tonumber(ARGV[8])
-local orderingDelayMs = tonumber(ARGV[9]) or 0
+local jobId = ARGV[5]
+local keepCompleted = tonumber(ARGV[6]) or 0
+local clientTimestamp = tonumber(ARGV[7])
+local orderingDelayMs = tonumber(ARGV[8]) or 0
 
 local readyKey = ns .. ":ready"
-local delayedKey = ns .. ":delayed"
 local stageKey = ns .. ":stage"
 local timerKey = ns .. ":stage:timer"
 local jobKey = ns .. ":job:" .. jobId
@@ -31,12 +29,11 @@ if not uniqueSet then
     -- Job exists, check its status and location
     local gid = redis.call("HGET", jobKey, "groupId")
     local inProcessing = redis.call("ZSCORE", ns .. ":processing", jobId)
-    local inDelayed = redis.call("ZSCORE", ns .. ":delayed", jobId)
     local inGroup = nil
     if gid then
       inGroup = redis.call("ZSCORE", ns .. ":g:" .. gid, jobId)
     end
-    if (not inProcessing) and (not inDelayed) and (not inGroup) then
+    if (not inProcessing) and (not inGroup) then
       if keepCompleted == 0 then
         redis.call("DEL", jobKey)
         redis.call("DEL", uniqueKey)
@@ -60,13 +57,12 @@ if not uniqueSet then
         end
       end
       local activeAgain = redis.call("ZSCORE", ns .. ":processing", jobId)
-      local delayedAgain = redis.call("ZSCORE", ns .. ":delayed", jobId)
       local inGroupAgain = nil
       if gid then
         inGroupAgain = redis.call("ZSCORE", ns .. ":g:" .. gid, jobId)
       end
       local jobStillExists = redis.call("EXISTS", jobKey)
-      if jobStillExists == 1 and (activeAgain or delayedAgain or inGroupAgain) then
+      if jobStillExists == 1 and (activeAgain or inGroupAgain) then
         return jobId
       end
     end
@@ -103,8 +99,7 @@ redis.call("HMSET", jobKey,
   "seq", tostring(seq),
   "timestamp", tostring(timestamp),
   "orderMs", tostring(orderMs),
-  "score", tostring(score),
-  "delayUntil", tostring(delayUntil)
+  "score", tostring(score)
 )
 
 -- Track group membership (idempotent)
@@ -113,13 +108,7 @@ redis.call("SADD", groupsKey, groupId)
 -- Determine job status and placement
 local jobStatus = "waiting"
 
-if delayUntil > 0 and delayUntil > now then
-  -- Job is delayed, add to delayed set and group set
-  redis.call("ZADD", gZ, score, jobId)
-  redis.call("ZADD", delayedKey, delayUntil, jobId)
-  jobStatus = "delayed"
-  redis.call("HSET", jobKey, "status", jobStatus)
-elseif orderMs and orderingDelayMs > 0 then
+if orderMs and orderingDelayMs > 0 then
   -- Job should be staged for ordering (orderMs provided and orderingDelayMs > 0)
   -- NOTE: Do NOT add to group ZSET yet - only to staging
   local releaseAt = orderMs + orderingDelayMs
@@ -149,6 +138,6 @@ end
 
 -- Return job data to avoid race condition where job might be processed & cleaned up
 -- before getJob() is called
-return {jobId, groupId, data, "0", tostring(maxAttempts), tostring(timestamp), tostring(orderMs), tostring(delayUntil), jobStatus}
+return {jobId, groupId, data, "0", tostring(maxAttempts), tostring(timestamp), tostring(orderMs), "0", jobStatus}
 
 

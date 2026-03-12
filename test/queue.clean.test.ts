@@ -80,37 +80,4 @@ describe('Queue.clean', () => {
     await w.close();
     await redis.quit();
   });
-
-  it('cleans delayed jobs older than grace time', async () => {
-    const redis = new Redis(REDIS_URL);
-    const q = new Queue<{ n: number }>({
-      redis,
-      namespace: `${namespace}:delayed`,
-      keepCompleted: 100,
-      keepFailed: 100,
-    });
-
-    // Add two delayed jobs 10 minutes in the future
-    await q.add({ groupId: 'g1', data: { n: 1 }, delay: 600_000 });
-    await q.add({ groupId: 'g1', data: { n: 2 }, delay: 600_000 });
-
-    // There should be no processing, just delayed
-    const beforeDelayed = await q.getDelayedCount();
-    expect(beforeDelayed).toBeGreaterThanOrEqual(2);
-
-    // Clean all delayed (grace 0 => score <= now)
-    // Since delayed scores are > now, use a large grace to include them artificially: graceAt = now - (-infinity)
-    // Instead, we simulate by cleaning with graceAt far in the future: implement uses now-grace, so pass negative to include future
-    const cleaned = await q.clean(
-      -1 * 24 * 60 * 60 * 1000,
-      Number.MAX_SAFE_INTEGER,
-      'delayed',
-    );
-    expect(cleaned).toBeGreaterThanOrEqual(2);
-
-    const afterDelayed = await q.getDelayedCount();
-    expect(afterDelayed).toBe(0);
-
-    await redis.quit();
-  });
 });

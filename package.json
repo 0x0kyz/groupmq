@@ -36,7 +36,7 @@
     "provenance": true
   },
   "scripts": {
-    "build": "tsdown src/index.ts --format esm --format cjs --dts --sourcemap && node scripts/copy-lua.mjs",
+    "build": "node scripts/generate-lua-module.mjs && tsdown src/index.ts --format esm --format cjs --dts --sourcemap",
     "prebuild": "pnpm test:lua",
     "test": "vitest run --no-file-parallelism",
     "test:lua": "node scripts/validate-lua-scripts.js",

@@ -6,71 +6,32 @@ local scanLimit = tonumber(ARGV[3]) or 20
 
 local readyKey = ns .. ":ready"
 
+-- Promote delayed jobs (backoff retries) that are now due
+local delayedKey = ns .. ":delayed"
+local dueJobs = redis.call("ZRANGEBYSCORE", delayedKey, 0, now, "LIMIT", 0, 100)
+for _, jobId in ipairs(dueJobs) do
+  redis.call("ZREM", delayedKey, jobId)
+  local jobKey = ns .. ":job:" .. jobId
+  local gid = redis.call("HGET", jobKey, "groupId")
+  if gid then
+    redis.call("HSET", jobKey, "status", "waiting")
+    redis.call("HDEL", jobKey, "runAt")
+    local gZ = ns .. ":g:" .. gid
+    local head = redis.call("ZRANGE", gZ, 0, 0, "WITHSCORES")
+    if head and #head >= 2 then
+      local headScore = tonumber(head[2])
+      redis.call("ZADD", readyKey, headScore, gid)
+    end
+  end
+end
+
 -- Respect paused state
 if redis.call("GET", ns .. ":paused") then
   return nil
 end
 
--- STALLED JOB RECOVERY WITH THROTTLING
--- Check for stalled jobs periodically to avoid overhead in hot path
--- This ensures stalled jobs are recovered even in high-load systems
--- Check interval is adaptive: 1/4 of jobTimeout (to check 4x during visibility window), max 5s
-local processingKey = ns .. ":processing"
-local stalledCheckKey = ns .. ":stalled:lastcheck"
-local lastCheck = tonumber(redis.call("GET", stalledCheckKey)) or 0
-local stalledCheckInterval = math.min(math.floor(vt / 4), 5000)
-
-local shouldCheckStalled = (now - lastCheck) >= stalledCheckInterval
-
 -- Get available groups
 local groups = redis.call("ZRANGE", readyKey, 0, scanLimit - 1, "WITHSCORES")
-
--- Check for stalled jobs if: queue is empty OR it's time for periodic check
-if (not groups or #groups == 0) or shouldCheckStalled then
-  if shouldCheckStalled then
-    redis.call("SET", stalledCheckKey, tostring(now))
-  end
-  
-  local expiredJobs = redis.call("ZRANGEBYSCORE", processingKey, 0, now)
-  for _, jobId in ipairs(expiredJobs) do
-    local procKey = ns .. ":processing:" .. jobId
-    local procData = redis.call("HMGET", procKey, "groupId", "deadlineAt")
-    local gid = procData[1]
-    local deadlineAt = tonumber(procData[2])
-    if gid and deadlineAt and now > deadlineAt then
-      local jobKey = ns .. ":job:" .. jobId
-      local jobScore = redis.call("HGET", jobKey, "score")
-      if jobScore then
-        local gZ = ns .. ":g:" .. gid
-        -- CRITICAL: Check if job is already in group set before re-adding
-        -- This prevents duplicate entries and ensures we only re-add if truly needed
-        local alreadyInGroup = redis.call("ZSCORE", gZ, jobId)
-        if not alreadyInGroup then
-          redis.call("ZADD", gZ, tonumber(jobScore), jobId)
-        end
-        -- CRITICAL: Reset status from "processing" to "waiting" when re-adding expired job
-        -- This prevents jobs from being stuck with "processing" status in the group set
-        redis.call("HSET", jobKey, "status", "waiting")
-        local head = redis.call("ZRANGE", gZ, 0, 0, "WITHSCORES")
-        if head and #head >= 2 then
-          local headScore = tonumber(head[2])
-          redis.call("ZADD", readyKey, headScore, gid)
-        end
-        -- Remove from group active list (BullMQ-style) - CRITICAL to unblock the group
-        local groupActiveKey = ns .. ":g:" .. gid .. ":active"
-        redis.call("LREM", groupActiveKey, 1, jobId)
-        redis.call("DEL", ns .. ":lock:" .. gid)
-        redis.call("DEL", procKey)
-        redis.call("ZREM", processingKey, jobId)
-      end
-    end
-  end
-  
-  -- Refresh groups after recovery (only if we didn't have any before)
-  if not groups or #groups == 0 then
-    groups = redis.call("ZRANGE", readyKey, 0, scanLimit - 1, "WITHSCORES")
-  end
-end
 
 if not groups or #groups == 0 then
   return nil
@@ -97,32 +58,28 @@ for i = 1, #groups, 2 do
       local headJobId = head[1]
       local headJobKey = ns .. ":job:" .. headJobId
       
-      -- Skip if head job is delayed (will be promoted later)
-      local jobStatus = redis.call("HGET", headJobKey, "status")
-      if jobStatus ~= "delayed" then
-        -- Pop the job and push to active list atomically
-        local zpop = redis.call("ZPOPMIN", gZ, 1)
-        if zpop and #zpop > 0 then
-          headJobId = zpop[1]
-          -- Read the popped job (use headJobId to avoid races)
-          headJobKey = ns .. ":job:" .. headJobId
-          job = redis.call("HMGET", headJobKey, "id","groupId","data","attempts","maxAttempts","seq","timestamp","orderMs","score")
-          
-          -- Push to group active list (enforces 1-per-group)
-          redis.call("LPUSH", groupActiveKey, headJobId)
-          
-          chosenGid = gid
-          chosenIndex = (i + 1) / 2 - 1
-          -- Mark job as processing for accurate stalled detection and idempotency
-          redis.call("HSET", headJobKey, "status", "processing")
-          
-          -- CRITICAL: Ensure job is removed from group set (defensive check)
-          -- This handles edge cases where job might still be in group set due to race conditions
-          -- or if ZPOPMIN didn't fully remove it (shouldn't happen, but be safe)
-          redis.call("ZREM", gZ, headJobId)
-          
-          break
-        end
+      -- Pop the job and push to active list atomically
+      local zpop = redis.call("ZPOPMIN", gZ, 1)
+      if zpop and #zpop > 0 then
+        headJobId = zpop[1]
+        -- Read the popped job (use headJobId to avoid races)
+        headJobKey = ns .. ":job:" .. headJobId
+        job = redis.call("HMGET", headJobKey, "id","groupId","data","attempts","maxAttempts","seq","timestamp","orderMs","score")
+        
+        -- Push to group active list (enforces 1-per-group)
+        redis.call("LPUSH", groupActiveKey, headJobId)
+        
+        chosenGid = gid
+        chosenIndex = (i + 1) / 2 - 1
+        -- Mark job as processing for accurate stalled detection and idempotency
+        redis.call("HSET", headJobKey, "status", "processing")
+        
+        -- CRITICAL: Ensure job is removed from group set (defensive check)
+        -- This handles edge cases where job might still be in group set due to race conditions
+        -- or if ZPOPMIN didn't fully remove it (shouldn't happen, but be safe)
+        redis.call("ZREM", gZ, headJobId)
+        
+        break
       end
     end
   end

@@ -15,7 +15,6 @@ local now = tonumber(timeResult[1]) * 1000 + math.floor(tonumber(timeResult[2]) 
 -- Keys
 local stageKey = ns .. ":stage"
 local readyKey = ns .. ":ready"
-local delayedKey = ns .. ":delayed"
 local groupsKey = ns .. ":groups"
 local timerKey = ns .. ":stage:timer"
 
@@ -34,7 +33,6 @@ for i, job in ipairs(jobs) do
   local data = job.data
   local maxAttempts = tonumber(job.maxAttempts)
   local orderMs = tonumber(job.orderMs) or clientTimestamp
-  local delayUntil = job.delayMs and (now + tonumber(job.delayMs)) or 0
   
   -- Idempotence check
   local uniqueKey = ns .. ":unique:" .. jobId
@@ -57,8 +55,7 @@ for i, job in ipairs(jobs) do
       "seq", tostring(seq),
       "timestamp", tostring(clientTimestamp),
       "orderMs", tostring(orderMs),
-      "score", tostring(score),
-      "delayUntil", tostring(delayUntil)
+      "score", tostring(score)
     )
     
     -- Add to groups set
@@ -71,12 +68,7 @@ for i, job in ipairs(jobs) do
     -- Determine job placement
     local jobStatus = "waiting"
     
-    if delayUntil > 0 and delayUntil > now then
-      -- Delayed job
-      redis.call("ZADD", delayedKey, delayUntil, jobId)
-      jobStatus = "delayed"
-      redis.call("HSET", jobKey, "status", jobStatus)
-    elseif orderMs and orderingDelayMs > 0 then
+    if orderMs and orderingDelayMs > 0 then
       -- Staged job (ordering)
       local releaseAt = orderMs + orderingDelayMs
       redis.call("ZADD", stageKey, releaseAt, jobId)
@@ -99,13 +91,13 @@ for i, job in ipairs(jobs) do
       tostring(maxAttempts),
       tostring(clientTimestamp),
       tostring(orderMs),
-      tostring(delayUntil),
+      "0", -- delayUntil (always 0 now)
       jobStatus,
     })
   else
     -- Job ID already exists (idempotence) - fetch existing job data
     local jobKey = ns .. ":job:" .. jobId
-    local jobData = redis.call("HMGET", jobKey, "id", "groupId", "data", "attempts", "maxAttempts", "timestamp", "orderMs", "delayUntil", "status")
+    local jobData = redis.call("HMGET", jobKey, "id", "groupId", "data", "attempts", "maxAttempts", "timestamp", "orderMs", "status")
     if jobData[1] then
       table.insert(results, jobData)
     else
@@ -118,7 +110,7 @@ for i, job in ipairs(jobs) do
         tostring(maxAttempts),
         tostring(clientTimestamp),
         tostring(orderMs),
-        tostring(delayUntil),
+        "0", -- delayUntil (always 0 now)
         "waiting",
       })
     end
