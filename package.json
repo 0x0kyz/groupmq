@@ -55,7 +55,8 @@
     "lint": "biome check .",
     "lint:fix": "biome check --write --unsafe .",
     "typecheck": "tsc --noEmit",
-    "prepublishOnly": "pnpm run build"
+    "prepublishOnly": "pnpm run build",
+    "publish:local": "npm version prerelease --preid next --no-git-tag-version && npm publish --registry http://localhost:4873/ --no-provenance"
   },
   "keywords": [
     "redis",

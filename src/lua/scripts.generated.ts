@@ -1105,6 +1105,12 @@ if delayedCount > 0 then
   return 0
 end
 
+-- Check simple (non-grouped) queue
+local simpleCount = redis.call("ZCARD", ns .. ":simple")
+if simpleCount > 0 then
+  return 0
+end
+
 -- Check ready groups (jobs waiting)
 local readyCount = redis.call("ZCARD", ns .. ":ready")
 if readyCount > 0 then
