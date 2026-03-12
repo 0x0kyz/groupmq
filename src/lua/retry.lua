@@ -8,7 +8,6 @@ local gid = redis.call("HGET", jobKey, "groupId")
 local attempts = tonumber(redis.call("HINCRBY", jobKey, "attempts", 1))
 local maxAttempts = tonumber(redis.call("HGET", jobKey, "maxAttempts"))
 
-redis.call("DEL", ns .. ":processing:" .. jobId)
 redis.call("ZREM", ns .. ":processing", jobId)
 
 -- BullMQ-style: Remove from group active list

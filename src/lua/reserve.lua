@@ -111,9 +111,7 @@ end
 -- Remove the group from ready queue
 redis.call("ZREMRANGEBYRANK", readyKey, chosenIndex, chosenIndex)
 
-local procKey = ns .. ":processing:" .. id
 local deadline = now + vt
-redis.call("HSET", procKey, "groupId", chosenGid, "deadlineAt", tostring(deadline))
 
 local processingKey2 = ns .. ":processing"
 redis.call("ZADD", processingKey2, deadline, id)

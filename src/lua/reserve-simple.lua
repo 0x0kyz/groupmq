@@ -37,9 +37,6 @@ local deadline = now + vt
 redis.call("ZADD", processingKey, deadline, id)
 redis.call("HSET", jobKey, "status", "processing")
 
--- Create processing metadata
-local procKey = ns .. ":processing:" .. id
-redis.call("HSET", procKey, "deadlineAt", tostring(deadline))
 
 -- Return format matches grouped reserve (10 fields separated by ||GROUPMQ||)
 -- id, groupId (empty), data, attempts, maxAttempts, seq (0), timestamp, orderMs, score (orderMs), deadline

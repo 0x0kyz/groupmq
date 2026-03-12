@@ -1,107 +1,51 @@
 {
   "commandstats": {
-    "hmset": {
-      "calls": 10000,
-      "usec": 14722,
-      "usec_per_call": 1.47,
-      "rejected_calls": 0,
-      "failed_calls": 0
-    },
-    "scard": {
-      "calls": 5000,
-      "usec": 3616,
-      "usec_per_call": 0.72,
-      "rejected_calls": 0,
-      "failed_calls": 0
-    },
-    "zrangebyscore": {
-      "calls": 5009,
-      "usec": 5809,
-      "usec_per_call": 1.16,
-      "rejected_calls": 0,
-      "failed_calls": 0
-    },
-    "smembers": {
-      "calls": 1,
-      "usec": 3,
-      "usec_per_call": 3,
-      "rejected_calls": 0,
-      "failed_calls": 0
-    },
-    "get": {
-      "calls": 5000,
-      "usec": 2582,
-      "usec_per_call": 0.52,
-      "rejected_calls": 0,
-      "failed_calls": 0
-    },
-    "hget": {
-      "calls": 10001,
-      "usec": 3921,
-      "usec_per_call": 0.39,
-      "rejected_calls": 0,
-      "failed_calls": 0
-    },
-    "zrange": {
-      "calls": 21,
-      "usec": 16,
-      "usec_per_call": 0.76,
-      "rejected_calls": 0,
-      "failed_calls": 0
-    },
-    "lrange": {
-      "calls": 37,
-      "usec": 841,
-      "usec_per_call": 22.73,
-      "rejected_calls": 0,
-      "failed_calls": 0
-    },
-    "set": {
-      "calls": 5001,
-      "usec": 8148,
-      "usec_per_call": 1.63,
-      "rejected_calls": 0,
-      "failed_calls": 0
-    },
-    "eval": {
-      "calls": 14,
-      "usec": 6320,
-      "usec_per_call": 451.43,
-      "rejected_calls": 0,
-      "failed_calls": 0
-    },
-    "incr": {
-      "calls": 5000,
-      "usec": 2922,
-      "usec_per_call": 0.58,
+    "zpopmin": {
+      "calls": 13,
+      "usec": 17,
+      "usec_per_call": 1.31,
       "rejected_calls": 0,
       "failed_calls": 0
     },
     "xadd": {
       "calls": 20001,
-      "usec": 25425,
-      "usec_per_call": 1.27,
+      "usec": 23197,
+      "usec_per_call": 1.16,
       "rejected_calls": 0,
       "failed_calls": 0
     },
-    "client|setname": {
-      "calls": 4,
-      "usec": 27,
-      "usec_per_call": 6.75,
+    "zcard": {
+      "calls": 5001,
+      "usec": 3922,
+      "usec_per_call": 0.78,
       "rejected_calls": 0,
       "failed_calls": 0
     },
-    "lindex": {
-      "calls": 24,
-      "usec": 62,
-      "usec_per_call": 2.58,
+    "lrange": {
+      "calls": 25,
+      "usec": 388,
+      "usec_per_call": 15.52,
       "rejected_calls": 0,
       "failed_calls": 0
     },
     "lpush": {
       "calls": 5000,
-      "usec": 8634,
-      "usec_per_call": 1.73,
+      "usec": 9199,
+      "usec_per_call": 1.84,
+      "rejected_calls": 0,
+      "failed_calls": 0
+    },
+    "hget": {
+      "calls": 10001,
+      "usec": 3590,
+      "usec_per_call": 0.36,
+      "rejected_calls": 0,
+      "failed_calls": 0
+    },
+    "zrangebyscore": {
+      "calls": 5013,
+      "usec": 5855,
+      "usec_per_call": 1.17,
       "rejected_calls": 0,
       "failed_calls": 0
     },
@@ -112,230 +56,322 @@
       "rejected_calls": 0,
       "failed_calls": 0
     },
-    "rpoplpush": {
-      "calls": 5009,
-      "usec": 6767,
-      "usec_per_call": 1.35,
-      "rejected_calls": 0,
-      "failed_calls": 0
-    },
-    "info": {
-      "calls": 16,
-      "usec": 1017,
-      "usec_per_call": 63.56,
-      "rejected_calls": 0,
-      "failed_calls": 0
-    },
-    "srem": {
-      "calls": 5000,
-      "usec": 1169,
-      "usec_per_call": 0.23,
-      "rejected_calls": 0,
-      "failed_calls": 0
-    },
-    "del": {
-      "calls": 5009,
-      "usec": 4007,
-      "usec_per_call": 0.8,
+    "evalsha": {
+      "calls": 10027,
+      "usec": 479198,
+      "usec_per_call": 47.79,
       "rejected_calls": 0,
       "failed_calls": 0
     },
     "llen": {
-      "calls": 8,
-      "usec": 3,
-      "usec_per_call": 0.38,
+      "calls": 12,
+      "usec": 7,
+      "usec_per_call": 0.58,
       "rejected_calls": 0,
       "failed_calls": 0
     },
-    "hgetall": {
-      "calls": 20744,
-      "usec": 40172,
-      "usec_per_call": 1.94,
+    "zrange": {
+      "calls": 21,
+      "usec": 13,
+      "usec_per_call": 0.62,
       "rejected_calls": 0,
       "failed_calls": 0
     },
-    "xtrim": {
-      "calls": 5001,
-      "usec": 4386,
-      "usec_per_call": 0.88,
-      "rejected_calls": 0,
-      "failed_calls": 0
-    },
-    "hincrby": {
+    "hmset": {
       "calls": 10000,
-      "usec": 6470,
-      "usec_per_call": 0.65,
-      "rejected_calls": 0,
-      "failed_calls": 0
-    },
-    "zadd": {
-      "calls": 15000,
-      "usec": 21871,
-      "usec_per_call": 1.46,
-      "rejected_calls": 0,
-      "failed_calls": 0
-    },
-    "hset": {
-      "calls": 5000,
-      "usec": 5881,
-      "usec_per_call": 1.18,
-      "rejected_calls": 0,
-      "failed_calls": 0
-    },
-    "hmget": {
-      "calls": 15009,
-      "usec": 6508,
-      "usec_per_call": 0.43,
+      "usec": 15609,
+      "usec_per_call": 1.56,
       "rejected_calls": 0,
       "failed_calls": 0
     },
     "config|resetstat": {
       "calls": 1,
-      "usec": 93,
-      "usec_per_call": 93,
+      "usec": 140,
+      "usec_per_call": 140,
       "rejected_calls": 0,
       "failed_calls": 0
     },
-    "evalsha": {
-      "calls": 10035,
-      "usec": 508666,
-      "usec_per_call": 50.69,
-      "rejected_calls": 0,
-      "failed_calls": 0
-    },
-    "zcard": {
+    "xtrim": {
       "calls": 5001,
-      "usec": 3774,
-      "usec_per_call": 0.75,
+      "usec": 3898,
+      "usec_per_call": 0.78,
       "rejected_calls": 0,
       "failed_calls": 0
     },
-    "bzpopmin": {
-      "calls": 5,
-      "usec": 84,
-      "usec_per_call": 16.8,
+    "set": {
+      "calls": 5001,
+      "usec": 7258,
+      "usec_per_call": 1.45,
       "rejected_calls": 0,
       "failed_calls": 0
     },
-    "exists": {
-      "calls": 5004,
-      "usec": 3448,
-      "usec_per_call": 0.69,
+    "hmget": {
+      "calls": 15013,
+      "usec": 5988,
+      "usec_per_call": 0.4,
       "rejected_calls": 0,
       "failed_calls": 0
     },
-    "zpopmin": {
-      "calls": 9,
-      "usec": 29,
-      "usec_per_call": 3.22,
+    "hincrby": {
+      "calls": 10000,
+      "usec": 5387,
+      "usec_per_call": 0.54,
+      "rejected_calls": 0,
+      "failed_calls": 0
+    },
+    "info": {
+      "calls": 16,
+      "usec": 482,
+      "usec_per_call": 30.12,
+      "rejected_calls": 0,
+      "failed_calls": 0
+    },
+    "client|setname": {
+      "calls": 4,
+      "usec": 18,
+      "usec_per_call": 4.5,
+      "rejected_calls": 0,
+      "failed_calls": 0
+    },
+    "incr": {
+      "calls": 5000,
+      "usec": 2900,
+      "usec_per_call": 0.58,
       "rejected_calls": 0,
       "failed_calls": 0
     },
     "lrem": {
       "calls": 5000,
-      "usec": 4874,
-      "usec_per_call": 0.97,
+      "usec": 4216,
+      "usec_per_call": 0.84,
+      "rejected_calls": 0,
+      "failed_calls": 0
+    },
+    "del": {
+      "calls": 5013,
+      "usec": 2707,
+      "usec_per_call": 0.54,
+      "rejected_calls": 0,
+      "failed_calls": 0
+    },
+    "exists": {
+      "calls": 5004,
+      "usec": 2665,
+      "usec_per_call": 0.53,
+      "rejected_calls": 0,
+      "failed_calls": 0
+    },
+    "zadd": {
+      "calls": 15000,
+      "usec": 19693,
+      "usec_per_call": 1.31,
+      "rejected_calls": 0,
+      "failed_calls": 0
+    },
+    "srem": {
+      "calls": 5000,
+      "usec": 602,
+      "usec_per_call": 0.12,
+      "rejected_calls": 0,
+      "failed_calls": 0
+    },
+    "hset": {
+      "calls": 5000,
+      "usec": 8423,
+      "usec_per_call": 1.68,
+      "rejected_calls": 0,
+      "failed_calls": 0
+    },
+    "eval": {
+      "calls": 14,
+      "usec": 2228,
+      "usec_per_call": 159.14,
+      "rejected_calls": 0,
+      "failed_calls": 0
+    },
+    "smembers": {
+      "calls": 1,
+      "usec": 2,
+      "usec_per_call": 2,
+      "rejected_calls": 0,
+      "failed_calls": 0
+    },
+    "bzpopmin": {
+      "calls": 9,
+      "usec": 113,
+      "usec_per_call": 12.56,
+      "rejected_calls": 0,
+      "failed_calls": 0
+    },
+    "scard": {
+      "calls": 5000,
+      "usec": 3821,
+      "usec_per_call": 0.76,
+      "rejected_calls": 0,
+      "failed_calls": 0
+    },
+    "hgetall": {
+      "calls": 14507,
+      "usec": 25046,
+      "usec_per_call": 1.73,
+      "rejected_calls": 0,
+      "failed_calls": 0
+    },
+    "get": {
+      "calls": 5000,
+      "usec": 2422,
+      "usec_per_call": 0.48,
+      "rejected_calls": 0,
+      "failed_calls": 0
+    },
+    "lindex": {
+      "calls": 16,
+      "usec": 15,
+      "usec_per_call": 0.94,
+      "rejected_calls": 0,
+      "failed_calls": 0
+    },
+    "rpoplpush": {
+      "calls": 5013,
+      "usec": 7191,
+      "usec_per_call": 1.43,
       "rejected_calls": 0,
       "failed_calls": 0
     }
   },
-  "slowlog": [],
+  "slowlog": [
+    [
+      0,
+      1773341727,
+      15399,
+      [
+        "evalsha",
+        "279f89e99acd38a83813ba4258ea2f391b27694c",
+        "14",
+        "bull:benchmark-1773341726523-uf1e23yyvof:wait",
+        "bull:benchmark-1773341726523-uf1e23yyvof:active",
+        "bull:benchmark-1773341726523-uf1e23yyvof:prioritized",
+        "bull:benchmark-1773341726523-uf1e23yyvof:events",
+        "bull:benchmark-1773341726523-uf1e23yyvof:stalled",
+        "bull:benchmark-1773341726523-uf1e23yyvof:limiter",
+        "bull:benchmark-1773341726523-uf1e23yyvof:delayed",
+        "bull:benchmark-1773341726523-uf1e23yyvof:paused",
+        "bull:benchmark-1773341726523-uf1e23yyvof:meta",
+        "bull:benchmark-1773341726523-uf1e23yyvof:pc",
+        "bull:benchmark-1773341726523-uf1e23yyvof:completed",
+        "bull:benchmark-1773341726523-uf1e23yyvof:791",
+        "bull:benchmark-1773341726523-uf1e23yyvof:metrics:completed",
+        "bull:benchmark-1773341726523-uf1e23yyvof:marker",
+        "791",
+        "1773341727971",
+        "returnvalue",
+        "null",
+        "completed",
+        "1",
+        "bull:benchmark-1773341726523-uf1e23yyvof:",
+        "�\u0000\u000b�token�&60194ab9-d747-4aa6-8669-fe5df2328c48:1�name��keepJobs�\u0000\u0001�count��limiter��lockDuration�u0�attempts\u0000�maxMetricsSize��fp... (21 more bytes)",
+        ""
+      ],
+      "192.168.158.1:30550",
+      ""
+    ]
+  ],
   "latency": [],
   "info": {
-    "used_memory": 12581320,
-    "used_memory_human": "12.00M",
-    "used_memory_peak": 12956040,
-    "used_memory_peak_human": "12.36M",
-    "total_commands_processed": 180967,
-    "instantaneous_ops_per_sec": 87179,
-    "total_net_input_bytes": 10490055,
-    "total_net_output_bytes": 4848457,
-    "keyspace_hits": 55793,
-    "keyspace_misses": 15066
+    "used_memory": 26630904,
+    "used_memory_human": "25.40M",
+    "used_memory_peak": 26651312,
+    "used_memory_peak_human": "25.42M",
+    "total_commands_processed": 174730,
+    "instantaneous_ops_per_sec": 82465,
+    "total_net_input_bytes": 10061426,
+    "total_net_output_bytes": 3580126,
+    "keyspace_hits": 49550,
+    "keyspace_misses": 15064
   },
   "summary": {
-    "totalCalls": 180965,
-    "totalUsec": 702268,
-    "avgUsecPerCall": 3.880684110187053,
+    "totalCalls": 174728,
+    "totalUsec": 646211,
+    "avgUsecPerCall": 3.6983826290005037,
     "commandCount": 34,
     "topCommands": [
       {
-        "command": "hgetall",
-        "calls": 20744,
-        "usec": 40172,
-        "usec_per_call": 1.94,
-        "rejected_calls": 0,
-        "failed_calls": 0
-      },
-      {
         "command": "xadd",
         "calls": 20001,
-        "usec": 25425,
-        "usec_per_call": 1.27,
+        "usec": 23197,
+        "usec_per_call": 1.16,
         "rejected_calls": 0,
         "failed_calls": 0
       },
       {
         "command": "hmget",
-        "calls": 15009,
-        "usec": 6508,
-        "usec_per_call": 0.43,
+        "calls": 15013,
+        "usec": 5988,
+        "usec_per_call": 0.4,
         "rejected_calls": 0,
         "failed_calls": 0
       },
       {
         "command": "zadd",
         "calls": 15000,
-        "usec": 21871,
-        "usec_per_call": 1.46,
+        "usec": 19693,
+        "usec_per_call": 1.31,
+        "rejected_calls": 0,
+        "failed_calls": 0
+      },
+      {
+        "command": "hgetall",
+        "calls": 14507,
+        "usec": 25046,
+        "usec_per_call": 1.73,
         "rejected_calls": 0,
         "failed_calls": 0
       },
       {
         "command": "evalsha",
-        "calls": 10035,
-        "usec": 508666,
-        "usec_per_call": 50.69,
+        "calls": 10027,
+        "usec": 479198,
+        "usec_per_call": 47.79,
         "rejected_calls": 0,
         "failed_calls": 0
       },
       {
         "command": "hget",
         "calls": 10001,
-        "usec": 3921,
-        "usec_per_call": 0.39,
+        "usec": 3590,
+        "usec_per_call": 0.36,
         "rejected_calls": 0,
         "failed_calls": 0
       },
       {
         "command": "hmset",
         "calls": 10000,
-        "usec": 14722,
-        "usec_per_call": 1.47,
+        "usec": 15609,
+        "usec_per_call": 1.56,
         "rejected_calls": 0,
         "failed_calls": 0
       },
       {
         "command": "hincrby",
         "calls": 10000,
-        "usec": 6470,
-        "usec_per_call": 0.65,
+        "usec": 5387,
+        "usec_per_call": 0.54,
         "rejected_calls": 0,
         "failed_calls": 0
       },
       {
         "command": "zrangebyscore",
-        "calls": 5009,
-        "usec": 5809,
-        "usec_per_call": 1.16,
+        "calls": 5013,
+        "usec": 5855,
+        "usec_per_call": 1.17,
         "rejected_calls": 0,
         "failed_calls": 0
       },
       {
-        "command": "rpoplpush",
-        "calls": 5009,
-        "usec": 6767,
-        "usec_per_call": 1.35,
+        "command": "del",
+        "calls": 5013,
+        "usec": 2707,
+        "usec_per_call": 0.54,
         "rejected_calls": 0,
         "failed_calls": 0
       }

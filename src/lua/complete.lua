@@ -6,7 +6,6 @@ local jobId = ARGV[1]
 local gid = ARGV[2]
 
 -- Remove from processing
-redis.call("DEL", ns .. ":processing:" .. jobId)
 redis.call("ZREM", ns .. ":processing", jobId)
 
 -- Check if this job holds the lock

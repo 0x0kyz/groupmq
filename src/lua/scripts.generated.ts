@@ -44,8 +44,6 @@ for _, jobId in ipairs(candidates) do
     local maxAttempts = tonumber(h[3]) or 3
     local status = h[5]
     local finishedOn = tonumber(h[6] or "0")
-    -- CRITICAL: Don't recover jobs that are completing (prevents race with completion)
-    -- "completing" is a temporary state set by complete-with-metadata.lua to prevent races
     if status == "processing" then
       stalledCount = stalledCount + 1
       redis.call("HSET", jobKey, "stalledCount", stalledCount)
@@ -57,7 +55,6 @@ for _, jobId in ipairs(candidates) do
         redis.call("ZREM", processingKey, jobId)
         local groupKey = ns .. ":g:" .. groupId
         redis.call("ZREM", groupKey, jobId)
-        redis.call("DEL", ns .. ":processing:" .. jobId)
         redis.call("HSET", jobKey, "status","failed","finishedOn", now,
                    "failedReason", "Job stalled " .. stalledCount .. " times (max: " .. maxStalledCount .. ")")
         redis.call("ZADD", ns .. ":failed", now, jobId)
@@ -66,7 +63,6 @@ for _, jobId in ipairs(candidates) do
         local stillInProcessing = redis.call("ZSCORE", processingKey, jobId)
         if stillInProcessing then
           redis.call("ZREM", processingKey, jobId)
-          redis.call("DEL", ns .. ":processing:" .. jobId)
           local score = tonumber(h[7])
           if score then
             local groupKey2 = ns .. ":g:" .. groupId
@@ -215,10 +211,8 @@ for _, jobId in ipairs(expiredJobs) do
   local stillInProcessing = redis.call("ZSCORE", processingKey, jobId)
   
   if stillInProcessing then
-    local procKey = ns .. ":processing:" .. jobId
-    local procData = redis.call("HMGET", procKey, "groupId", "deadlineAt")
-    local gid = procData[1]
-    local deadlineAt = tonumber(procData[2])
+    local gid = redis.call("HGET", ns .. ":job:" .. jobId, "groupId")
+    local deadlineAt = tonumber(stillInProcessing)
     if gid and deadlineAt and now > deadlineAt then
       local jobKey = ns .. ":job:" .. jobId
       local jobScore = redis.call("HGET", jobKey, "score")
@@ -242,7 +236,6 @@ for _, jobId in ipairs(expiredJobs) do
         local groupActiveKey = ns .. ":g:" .. gid .. ":active"
         redis.call("LREM", groupActiveKey, 1, jobId)
         redis.call("DEL", ns .. ":lock:" .. gid)
-        redis.call("DEL", procKey)
         redis.call("ZREM", processingKey, jobId)
         
         -- No counter operations - use ZCARD for counts
@@ -290,10 +283,7 @@ if jobStatus ~= "processing" or not stillInProcessing then
   return nil
 end
 
--- Atomically mark as completed and remove from processing
--- This prevents stalled checker from racing with us
-redis.call("HSET", jobKey, "status", "completing") -- Temporary status to block stalled checker
-redis.call("DEL", ns .. ":processing:" .. completedJobId)
+-- Atomically remove from processing
 redis.call("ZREM", processingKey, completedJobId)
 
 -- Part 3: Record job metadata (completed or failed)
@@ -417,9 +407,7 @@ end
 -- Push next job to active list (chaining)
 redis.call("LPUSH", groupActiveKey, id)
 
-local procKey = ns .. ":processing:" .. id
 local deadline = now + vt
-redis.call("HSET", procKey, "groupId", groupId, "deadlineAt", tostring(deadline))
 
 local processingKey = ns .. ":processing"
 redis.call("ZADD", processingKey, deadline, id)
@@ -467,10 +455,7 @@ if jobStatus ~= "processing" or not stillInProcessing then
   return 0
 end
 
--- Atomically mark as completed and remove from processing
--- This prevents stalled checker from racing with us
-redis.call("HSET", jobKey, "status", "completing") -- Temporary status to block stalled checker
-redis.call("DEL", ns .. ":processing:" .. jobId)
+-- Atomically remove from processing
 redis.call("ZREM", processingKey, jobId)
 
 -- Handle group operations only if groupId is not empty (simple jobs skip this)
@@ -592,7 +577,6 @@ local jobId = ARGV[1]
 local gid = ARGV[2]
 
 -- Remove from processing
-redis.call("DEL", ns .. ":processing:" .. jobId)
 redis.call("ZREM", ns .. ":processing", jobId)
 
 -- Check if this job holds the lock
@@ -647,7 +631,6 @@ local readyKey = ns .. ":ready"
 redis.call("ZREM", gZ, jobId)
 
 -- Remove from processing if it's there
-redis.call("DEL", ns .. ":processing:" .. jobId)
 redis.call("ZREM", ns .. ":processing", jobId)
 
 -- No counter operations - use ZCARD for counts
@@ -1096,21 +1079,16 @@ local gid = ARGV[2]
 local extendMs = tonumber(ARGV[3])
 
 -- BullMQ-style: only extend processing deadline, no group lock
-local procKey = ns .. ":processing:" .. jobId
-local exists = redis.call("EXISTS", procKey)
-if exists == 1 then
-  local now = tonumber(redis.call("TIME")[1]) * 1000
+local processingKey = ns .. ":processing"
+local stillProcessing = redis.call("ZSCORE", processingKey, jobId)
+if stillProcessing then
+  local t = redis.call("TIME")
+  local now = tonumber(t[1]) * 1000 + math.floor(tonumber(t[2]) / 1000)
   local newDeadline = now + extendMs
-  redis.call("HSET", procKey, "deadlineAt", tostring(newDeadline))
-  
-  -- Also update the processing ZSET score
-  local processingKey = ns .. ":processing"
   redis.call("ZADD", processingKey, newDeadline, jobId)
   return 1
 end
 return 0
-
-
 `,
   'is-empty': `-- argv: ns
 local ns = KEYS[1]
@@ -1341,7 +1319,6 @@ local groupId = redis.call("HGET", jobKey, "groupId")
 
 -- Remove from delayed and processing structures
 redis.call("ZREM", delayedKey, jobId)
-redis.call("DEL", ns .. ":processing:" .. jobId)
 redis.call("ZREM", processingKey, jobId)
 
 -- Remove from completed/failed retention sets if present
@@ -1475,9 +1452,7 @@ if not allowedJobId or activeCount == 0 then
 end
 -- If this is grace collection and activeCount > 0, the active list already has the job
 
-local procKey = ns .. ":processing:" .. id
 local deadline = now + vt
-redis.call("HSET", procKey, "groupId", groupId, "deadlineAt", tostring(deadline))
 
 local processingKey = ns .. ":processing"
 redis.call("ZADD", processingKey, deadline, id)
@@ -1525,10 +1500,8 @@ if (now - lastCheck) >= stalledCheckInterval then
   local expiredJobs = redis.call("ZRANGEBYSCORE", processingKey, 0, now)
   if #expiredJobs > 0 then
     for _, jobId in ipairs(expiredJobs) do
-      local procKey = ns .. ":processing:" .. jobId
-      local procData = redis.call("HMGET", procKey, "groupId", "deadlineAt")
-      local gid = procData[1]
-      local deadlineAt = tonumber(procData[2])
+      local deadlineAt = tonumber(redis.call("ZSCORE", processingKey, jobId))
+      local gid = redis.call("HGET", ns .. ":job:" .. jobId, "groupId")
       if gid and deadlineAt and now > deadlineAt then
         local jobKey = ns .. ":job:" .. jobId
         local jobScore = redis.call("HGET", jobKey, "score")
@@ -1541,7 +1514,6 @@ if (now - lastCheck) >= stalledCheckInterval then
             redis.call("ZADD", readyKey, headScore, gid)
           end
           redis.call("DEL", ns .. ":lock:" .. gid)
-          redis.call("DEL", procKey)
           redis.call("ZREM", processingKey, jobId)
         end
       end
@@ -1599,9 +1571,7 @@ for i = 1, #groups, 2 do
             -- Mark job as processing
             redis.call("HSET", jobKey, "status", "processing")
             
-            local procKey = ns .. ":processing:" .. id
             local deadline = now + vt
-            redis.call("HSET", procKey, "groupId", gid, "deadlineAt", tostring(deadline))
             redis.call("ZADD", processingKey, deadline, id)
 
             -- Re-add group if there is a new head job (next oldest)
@@ -1669,9 +1639,6 @@ local deadline = now + vt
 redis.call("ZADD", processingKey, deadline, id)
 redis.call("HSET", jobKey, "status", "processing")
 
--- Create processing metadata
-local procKey = ns .. ":processing:" .. id
-redis.call("HSET", procKey, "deadlineAt", tostring(deadline))
 
 -- Return format matches grouped reserve (10 fields separated by ||GROUPMQ||)
 -- id, groupId (empty), data, attempts, maxAttempts, seq (0), timestamp, orderMs, score (orderMs), deadline
@@ -1790,9 +1757,7 @@ end
 -- Remove the group from ready queue
 redis.call("ZREMRANGEBYRANK", readyKey, chosenIndex, chosenIndex)
 
-local procKey = ns .. ":processing:" .. id
 local deadline = now + vt
-redis.call("HSET", procKey, "groupId", chosenGid, "deadlineAt", tostring(deadline))
 
 local processingKey2 = ns .. ":processing"
 redis.call("ZADD", processingKey2, deadline, id)
@@ -1818,7 +1783,6 @@ local gid = redis.call("HGET", jobKey, "groupId")
 local attempts = tonumber(redis.call("HINCRBY", jobKey, "attempts", 1))
 local maxAttempts = tonumber(redis.call("HGET", jobKey, "maxAttempts"))
 
-redis.call("DEL", ns .. ":processing:" .. jobId)
 redis.call("ZREM", ns .. ":processing", jobId)
 
 -- BullMQ-style: Remove from group active list

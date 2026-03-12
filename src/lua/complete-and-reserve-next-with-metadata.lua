@@ -30,10 +30,7 @@ if jobStatus ~= "processing" or not stillInProcessing then
   return nil
 end
 
--- Atomically mark as completed and remove from processing
--- This prevents stalled checker from racing with us
-redis.call("HSET", jobKey, "status", "completing") -- Temporary status to block stalled checker
-redis.call("DEL", ns .. ":processing:" .. completedJobId)
+-- Atomically remove from processing
 redis.call("ZREM", processingKey, completedJobId)
 
 -- Part 3: Record job metadata (completed or failed)
@@ -157,9 +154,7 @@ end
 -- Push next job to active list (chaining)
 redis.call("LPUSH", groupActiveKey, id)
 
-local procKey = ns .. ":processing:" .. id
 local deadline = now + vt
-redis.call("HSET", procKey, "groupId", groupId, "deadlineAt", tostring(deadline))
 
 local processingKey = ns .. ":processing"
 redis.call("ZADD", processingKey, deadline, id)

@@ -40,8 +40,6 @@ for _, jobId in ipairs(candidates) do
     local maxAttempts = tonumber(h[3]) or 3
     local status = h[5]
     local finishedOn = tonumber(h[6] or "0")
-    -- CRITICAL: Don't recover jobs that are completing (prevents race with completion)
-    -- "completing" is a temporary state set by complete-with-metadata.lua to prevent races
     if status == "processing" then
       stalledCount = stalledCount + 1
       redis.call("HSET", jobKey, "stalledCount", stalledCount)
@@ -53,7 +51,6 @@ for _, jobId in ipairs(candidates) do
         redis.call("ZREM", processingKey, jobId)
         local groupKey = ns .. ":g:" .. groupId
         redis.call("ZREM", groupKey, jobId)
-        redis.call("DEL", ns .. ":processing:" .. jobId)
         redis.call("HSET", jobKey, "status","failed","finishedOn", now,
                    "failedReason", "Job stalled " .. stalledCount .. " times (max: " .. maxStalledCount .. ")")
         redis.call("ZADD", ns .. ":failed", now, jobId)
@@ -62,7 +59,6 @@ for _, jobId in ipairs(candidates) do
         local stillInProcessing = redis.call("ZSCORE", processingKey, jobId)
         if stillInProcessing then
           redis.call("ZREM", processingKey, jobId)
-          redis.call("DEL", ns .. ":processing:" .. jobId)
           local score = tonumber(h[7])
           if score then
             local groupKey2 = ns .. ":g:" .. groupId

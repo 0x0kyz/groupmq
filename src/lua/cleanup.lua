@@ -13,10 +13,8 @@ for _, jobId in ipairs(expiredJobs) do
   local stillInProcessing = redis.call("ZSCORE", processingKey, jobId)
   
   if stillInProcessing then
-    local procKey = ns .. ":processing:" .. jobId
-    local procData = redis.call("HMGET", procKey, "groupId", "deadlineAt")
-    local gid = procData[1]
-    local deadlineAt = tonumber(procData[2])
+    local gid = redis.call("HGET", ns .. ":job:" .. jobId, "groupId")
+    local deadlineAt = tonumber(stillInProcessing)
     if gid and deadlineAt and now > deadlineAt then
       local jobKey = ns .. ":job:" .. jobId
       local jobScore = redis.call("HGET", jobKey, "score")
@@ -40,7 +38,6 @@ for _, jobId in ipairs(expiredJobs) do
         local groupActiveKey = ns .. ":g:" .. gid .. ":active"
         redis.call("LREM", groupActiveKey, 1, jobId)
         redis.call("DEL", ns .. ":lock:" .. gid)
-        redis.call("DEL", procKey)
         redis.call("ZREM", processingKey, jobId)
         
         -- No counter operations - use ZCARD for counts

@@ -30,10 +30,7 @@ if jobStatus ~= "processing" or not stillInProcessing then
   return 0
 end
 
--- Atomically mark as completed and remove from processing
--- This prevents stalled checker from racing with us
-redis.call("HSET", jobKey, "status", "completing") -- Temporary status to block stalled checker
-redis.call("DEL", ns .. ":processing:" .. jobId)
+-- Atomically remove from processing
 redis.call("ZREM", processingKey, jobId)
 
 -- Handle group operations only if groupId is not empty (simple jobs skip this)

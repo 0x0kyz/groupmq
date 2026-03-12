@@ -9,7 +9,6 @@ local readyKey = ns .. ":ready"
 redis.call("ZREM", gZ, jobId)
 
 -- Remove from processing if it's there
-redis.call("DEL", ns .. ":processing:" .. jobId)
 redis.call("ZREM", ns .. ":processing", jobId)
 
 -- No counter operations - use ZCARD for counts

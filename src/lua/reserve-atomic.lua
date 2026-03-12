@@ -95,9 +95,7 @@ if not allowedJobId or activeCount == 0 then
 end
 -- If this is grace collection and activeCount > 0, the active list already has the job
 
-local procKey = ns .. ":processing:" .. id
 local deadline = now + vt
-redis.call("HSET", procKey, "groupId", groupId, "deadlineAt", tostring(deadline))
 
 local processingKey = ns .. ":processing"
 redis.call("ZADD", processingKey, deadline, id)

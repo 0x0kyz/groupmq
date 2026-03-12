@@ -16,7 +16,6 @@ local groupId = redis.call("HGET", jobKey, "groupId")
 
 -- Remove from delayed and processing structures
 redis.call("ZREM", delayedKey, jobId)
-redis.call("DEL", ns .. ":processing:" .. jobId)
 redis.call("ZREM", processingKey, jobId)
 
 -- Remove from completed/failed retention sets if present
