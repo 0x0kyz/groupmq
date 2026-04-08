@@ -1513,7 +1513,13 @@ if (now - lastCheck) >= stalledCheckInterval then
         local jobScore = redis.call("HGET", jobKey, "score")
         if jobScore then
           local gZ = ns .. ":g:" .. gid
+          -- Remove from group active list BEFORE re-adding to group set
+          -- This prevents the job from blocking the group after recovery
+          local groupActiveKey = ns .. ":g:" .. gid .. ":active"
+          redis.call("LREM", groupActiveKey, 1, jobId)
           redis.call("ZADD", gZ, tonumber(jobScore), jobId)
+          -- Reset status so the job is visible as waiting again
+          redis.call("HSET", jobKey, "status", "waiting")
           local head = redis.call("ZRANGE", gZ, 0, 0, "WITHSCORES")
           if head and #head >= 2 then
             local headScore = tonumber(head[2])
