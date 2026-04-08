@@ -1,3 +1,10 @@
+## [2.0.0-next.3](https://github.com/Openpanel-dev/groupmq/compare/v2.0.0-next.2...v2.0.0-next.3) (2026-04-08)
+
+
+### Bug Fixes
+
+* dangling jobs when batched ([821b3c1](https://github.com/Openpanel-dev/groupmq/commit/821b3c1cd6403c9589b9abebe230aadc07ac982f))
+
 ## [2.0.0-next.2](https://github.com/Openpanel-dev/groupmq/compare/v2.0.0-next.1...v2.0.0-next.2) (2026-04-08)
 
 
