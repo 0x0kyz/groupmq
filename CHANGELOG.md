@@ -1,3 +1,10 @@
+## [2.0.0-next.2](https://github.com/Openpanel-dev/groupmq/compare/v2.0.0-next.1...v2.0.0-next.2) (2026-04-08)
+
+
+### Bug Fixes
+
+* stalled jobs get stuck ([d9b7811](https://github.com/Openpanel-dev/groupmq/commit/d9b78110c426cc9285fbad8041b8733ea38c28f4))
+
 ## [2.0.0-next.1](https://github.com/Openpanel-dev/groupmq/compare/v1.1.1-next.2...v2.0.0-next.1) (2026-03-12)
 
 
