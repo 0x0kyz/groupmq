@@ -14,49 +14,6 @@ end
 
 local out = {}
 
--- STALLED JOB RECOVERY WITH THROTTLING
--- Check for stalled jobs periodically to avoid overhead in hot path
--- This ensures stalled jobs are recovered even in high-load systems where ready queue is never empty
--- Check interval is adaptive: 1/4 of jobTimeout (to check 4x during visibility window), max 5s
-local stalledCheckKey = ns .. ":stalled:lastcheck"
-local lastCheck = tonumber(redis.call("GET", stalledCheckKey)) or 0
-local stalledCheckInterval = math.min(math.floor(vt / 4), 5000)
-
-if (now - lastCheck) >= stalledCheckInterval then
-  -- Update last check timestamp
-  redis.call("SET", stalledCheckKey, tostring(now))
-  
-  -- Check for expired jobs and recover them
-  local expiredJobs = redis.call("ZRANGEBYSCORE", processingKey, 0, now)
-  if #expiredJobs > 0 then
-    for _, jobId in ipairs(expiredJobs) do
-      local deadlineAt = tonumber(redis.call("ZSCORE", processingKey, jobId))
-      local gid = redis.call("HGET", ns .. ":job:" .. jobId, "groupId")
-      if gid and deadlineAt and now > deadlineAt then
-        local jobKey = ns .. ":job:" .. jobId
-        local jobScore = redis.call("HGET", jobKey, "score")
-        if jobScore then
-          local gZ = ns .. ":g:" .. gid
-          -- Remove from group active list BEFORE re-adding to group set
-          -- This prevents the job from blocking the group after recovery
-          local groupActiveKey = ns .. ":g:" .. gid .. ":active"
-          redis.call("LREM", groupActiveKey, 1, jobId)
-          redis.call("ZADD", gZ, tonumber(jobScore), jobId)
-          -- Reset status so the job is visible as waiting again
-          redis.call("HSET", jobKey, "status", "waiting")
-          local head = redis.call("ZRANGE", gZ, 0, 0, "WITHSCORES")
-          if head and #head >= 2 then
-            local headScore = tonumber(head[2])
-            redis.call("ZADD", readyKey, headScore, gid)
-          end
-          redis.call("DEL", ns .. ":lock:" .. gid)
-          redis.call("ZREM", processingKey, jobId)
-        end
-      end
-    end
-  end
-end
-
 -- Pop up to maxBatch groups from ready set (lowest score first)
 local groups = redis.call("ZRANGE", readyKey, 0, maxBatch - 1, "WITHSCORES")
 if not groups or #groups == 0 then
