@@ -1,3 +1,10 @@
+## [2.0.0-next.4](https://github.com/Openpanel-dev/groupmq/compare/v2.0.0-next.3...v2.0.0-next.4) (2026-04-23)
+
+
+### Features
+
+* add drain events ([7a5a3aa](https://github.com/Openpanel-dev/groupmq/commit/7a5a3aa81011350c499517657ba8dfbc8cf82c35))
+
 ## [2.0.0-next.3](https://github.com/Openpanel-dev/groupmq/compare/v2.0.0-next.2...v2.0.0-next.3) (2026-04-08)
 
 
