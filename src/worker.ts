@@ -13,6 +13,14 @@ export interface WorkerEvents<T = any>
   ready: () => void;
   failed: (job: Job<T>) => void;
   completed: (job: Job<T>) => void;
+  /**
+   * Fires when the worker polled Redis and confirmed the queue is empty AND
+   * nothing is in flight. Re-fires on every poll cycle while idle (roughly
+   * every `blockingTimeoutSec`). Paired with `completed`, this guarantees at
+   * least one event per poll cycle under any healthy condition — useful as a
+   * liveness heartbeat for consumer-health readiness probes.
+   */
+  drained: () => void;
   'ioredis:close': () => void;
   'graceful-timeout': (job: Job<T>) => void;
   stalled: (jobId: string, groupId: string) => void;
@@ -672,6 +680,15 @@ class _Worker<T = any> extends TypedEventEmitter<WorkerEvents<T>> {
           );
 
           asyncFifoQueue.add(processingPromise);
+        } else if (
+          !this.stopping &&
+          asyncFifoQueue.numTotal() === 0 &&
+          this.jobsInProgress.size === 0
+        ) {
+          // Nothing fetched and nothing in flight — queue is fully drained.
+          // Emit each poll cycle so listeners can use this as a consumer
+          // liveness heartbeat alongside `completed`.
+          this.emit('drained');
         }
         // Note: No delay here - just loop back to Phase 1 immediately
         // The adaptive timeout in Phase 1's blocking reserve handles idle efficiently
