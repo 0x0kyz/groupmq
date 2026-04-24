@@ -1,3 +1,10 @@
+## [2.0.0-next.5](https://github.com/Openpanel-dev/groupmq/compare/v2.0.0-next.4...v2.0.0-next.5) (2026-04-24)
+
+
+### Bug Fixes
+
+* "NOSCRIPT No matching script. Please use EVAL" during redis restart ([e9253b3](https://github.com/Openpanel-dev/groupmq/commit/e9253b3040d218f6956a0db7da97a0438c076142))
+
 ## [2.0.0-next.4](https://github.com/Openpanel-dev/groupmq/compare/v2.0.0-next.3...v2.0.0-next.4) (2026-04-23)
 
 
