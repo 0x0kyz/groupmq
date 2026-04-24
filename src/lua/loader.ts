@@ -60,5 +60,15 @@ export async function evalScript<T = any>(
   numKeys: number,
 ): Promise<T> {
   const sha = await loadScript(client, name);
-  return (client as any).evalsha(sha, numKeys, ...argv);
+  try {
+    return await (client as any).evalsha(sha, numKeys, ...argv);
+  } catch (err) {
+    const message = (err as { message?: string } | null)?.message ?? '';
+    if (message.includes('NOSCRIPT')) {
+      cacheByClient.get(client)?.delete(name);
+      const freshSha = await loadScript(client, name);
+      return (client as any).evalsha(freshSha, numKeys, ...argv);
+    }
+    throw err;
+  }
 }
