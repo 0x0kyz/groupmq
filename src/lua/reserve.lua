@@ -42,12 +42,23 @@ if (not groups or #groups == 0) or shouldCheckStalled then
       local jobScore = redis.call("HGET", jobKey, "score")
       if jobScore then
         local gZ = ns .. ":g:" .. gid
-        redis.call("ZADD", gZ, tonumber(jobScore), jobId)
+        -- CRITICAL: Check if job is already in group set before re-adding
+        -- This prevents duplicate entries and ensures we only re-add if truly needed
+        local alreadyInGroup = redis.call("ZSCORE", gZ, jobId)
+        if not alreadyInGroup then
+          redis.call("ZADD", gZ, tonumber(jobScore), jobId)
+        end
+        -- CRITICAL: Reset status from "processing" to "waiting" when re-adding expired job
+        -- This prevents jobs from being stuck with "processing" status in the group set
+        redis.call("HSET", jobKey, "status", "waiting")
         local head = redis.call("ZRANGE", gZ, 0, 0, "WITHSCORES")
         if head and #head >= 2 then
           local headScore = tonumber(head[2])
           redis.call("ZADD", readyKey, headScore, gid)
         end
+        -- Remove from group active list (BullMQ-style) - CRITICAL to unblock the group
+        local groupActiveKey = ns .. ":g:" .. gid .. ":active"
+        redis.call("LREM", groupActiveKey, 1, jobId)
         redis.call("DEL", ns .. ":lock:" .. gid)
         redis.call("DEL", procKey)
         redis.call("ZREM", processingKey, jobId)
@@ -66,7 +77,6 @@ if not groups or #groups == 0 then
 end
 
 local chosenGid = nil
-local chosenIndex = nil
 local headJobId = nil
 local job = nil
 
@@ -79,6 +89,48 @@ for i = 1, #groups, 2 do
   
   -- Check if group has no active jobs (BullMQ-style gating)
   local activeCount = redis.call("LLEN", groupActiveKey)
+
+  -- Self-healing: detect and clean up ghost active entries left by ungraceful shutdown
+  if activeCount > 0 then
+    local firstActive = redis.call("LINDEX", groupActiveKey, 0)
+    if firstActive then
+      local isStale = false
+      local procScore = redis.call("ZSCORE", processingKey, firstActive)
+      if not procScore then
+        isStale = true
+      else
+        local sStatus = redis.call("HGET", ns .. ":job:" .. firstActive, "status")
+        if not sStatus or (sStatus ~= "processing" and sStatus ~= "completing") then
+          isStale = true
+        else
+          local deadline = tonumber(procScore)
+          if deadline then
+            local gap = deadline - now
+            local hbThreshold = math.max(30000, math.min(120000, math.floor(vt / 3)))
+            if gap < (vt - hbThreshold) then
+              isStale = true
+            end
+          end
+        end
+      end
+      if isStale then
+        redis.call("DEL", groupActiveKey)
+        local sJobKey = ns .. ":job:" .. firstActive
+        local sScore = redis.call("HGET", sJobKey, "score")
+        if sScore then
+          redis.call("ZADD", gZ, tonumber(sScore), firstActive)
+          redis.call("HSET", sJobKey, "status", "waiting")
+        end
+        redis.call("ZREM", processingKey, firstActive)
+        redis.call("DEL", ns .. ":processing:" .. firstActive)
+        activeCount = 0
+      end
+    else
+      redis.call("DEL", groupActiveKey)
+      activeCount = 0
+    end
+  end
+
   if activeCount == 0 then
     -- Check if group has jobs
     local head = redis.call("ZRANGE", gZ, 0, 0, "WITHSCORES")
@@ -101,9 +153,9 @@ for i = 1, #groups, 2 do
           redis.call("LPUSH", groupActiveKey, headJobId)
           
           chosenGid = gid
-          chosenIndex = (i + 1) / 2 - 1
           -- Mark job as processing for accurate stalled detection and idempotency
           redis.call("HSET", headJobKey, "status", "processing")
+
           break
         end
       end
@@ -134,8 +186,8 @@ if not id or id == false then
   return nil
 end
 
--- Remove the group from ready queue
-redis.call("ZREMRANGEBYRANK", readyKey, chosenIndex, chosenIndex)
+-- Remove the chosen group from ready queue by name (not by rank, which can shift)
+redis.call("ZREM", readyKey, chosenGid)
 
 local procKey = ns .. ":processing:" .. id
 local deadline = now + vt
@@ -151,6 +203,6 @@ if nextHead and #nextHead >= 2 then
   redis.call("ZADD", readyKey, nextScore, chosenGid)
 end
 
-return id .. "|||" .. groupId .. "|||" .. payload .. "|||" .. attempts .. "|||" .. maxAttempts .. "|||" .. seq .. "|||" .. enq .. "|||" .. orderMs .. "|||" .. score .. "|||" .. deadline
+return id .. "||GROUPMQ||" .. groupId .. "||GROUPMQ||" .. payload .. "||GROUPMQ||" .. attempts .. "||GROUPMQ||" .. maxAttempts .. "||GROUPMQ||" .. seq .. "||GROUPMQ||" .. enq .. "||GROUPMQ||" .. orderMs .. "||GROUPMQ||" .. score .. "||GROUPMQ||" .. deadline
 
 

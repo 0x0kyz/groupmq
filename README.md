@@ -1,3 +1,28 @@
+## ⚠️ Fork Notice
+
+This repository is a fork of [Openpanel-dev/groupmq](https://github.com/Openpanel-dev/groupmq), based on tag **`v1.1.1-next.2`**.
+
+It includes additional bug fixes that were not yet merged upstream.
+
+### Fixes applied on top of v1.1.1-next.2
+
+These fixes address [issue #14](https://github.com/Openpanel-dev/groupmq/issues/14) and related group lifecycle / stuck job problems:
+
+| File | Fix |
+|---|---|
+| `src/lua/reserve.lua` | Use `ZREM` by group name instead of `ZREMRANGEBYRANK` by index — prevents wrong groups from being dequeued under concurrent access |
+| `src/lua/reserve-batch.lua` | Re-add group to ready queue after each batch reservation; clean up active list and reset job status on stall detection |
+| `src/lua/complete.lua` | Remove lock-based completion; use BullMQ-style `groupActiveKey` list; properly clean up empty groups on final job completion |
+| `src/lua/complete-and-reserve-next-with-metadata.lua` | Fix race condition: clean up empty group when job is not at head, preventing ghost groups in Redis |
+| `src/lua/check-stalled.lua` | Clean up empty group keys after job exceeds max stalled count and is moved to failed |
+| `src/lua/enqueue-batch.lua` | Fix delayed/staged jobs being incorrectly added to group ZSET at enqueue time; only add when immediately ready |
+| `src/lua/promote-delayed-jobs.lua` | Fix promoted jobs not being added to group ZSET; use `HMGET` for `groupId`+`score`, update status to `waiting` |
+| `src/index.ts` | Remove re-export of `groupmq-bullboard-adapter` (not available in this build) |
+
+See [CHANGELOG.md](./CHANGELOG.md) for full details.
+
+---
+
 
 <p align="center">
   <img src="website/public/favicon/web-app-manifest-512x512.png" width="200px" height="200px" />

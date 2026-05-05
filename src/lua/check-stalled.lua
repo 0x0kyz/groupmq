@@ -57,6 +57,13 @@ for _, jobId in ipairs(candidates) do
         redis.call("HSET", jobKey, "status","failed","finishedOn", now,
                    "failedReason", "Job stalled " .. stalledCount .. " times (max: " .. maxStalledCount .. ")")
         redis.call("ZADD", ns .. ":failed", now, jobId)
+        -- Clean up empty group after failing last job
+        if redis.call("ZCARD", groupKey) == 0 then
+          redis.call("DEL", groupKey)
+          redis.call("SREM", ns .. ":groups", groupId)
+          redis.call("ZREM", ns .. ":ready", groupId)
+          redis.call("DEL", ns .. ":g:" .. groupId .. ":active")
+        end
         table.insert(results, jobId); table.insert(results, groupId); table.insert(results, "failed")
       else
         local stillInProcessing = redis.call("ZSCORE", processingKey, jobId)

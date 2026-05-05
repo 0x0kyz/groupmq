@@ -114,9 +114,17 @@ else
   -- Race condition: job is not at head (maybe already removed, or wrong job)
   -- Clean it up anyway to prevent stale entries
   redis.call("LREM", groupActiveKey, 1, completedJobId)
-  
-  -- If active list had a different job or was empty, don't try to reserve next
-  -- Return nil to indicate no chaining
+
+  -- Clean up empty group if this was the last job
+  local gZ2 = ns .. ":g:" .. gid
+  if redis.call("ZCARD", gZ2) == 0 and redis.call("LLEN", groupActiveKey) == 0 then
+    redis.call("DEL", gZ2)
+    redis.call("SREM", ns .. ":groups", gid)
+    redis.call("ZREM", ns .. ":ready", gid)
+    redis.call("DEL", groupActiveKey)
+  end
+
+  -- Don't try to reserve next
   return nil
 end
 
@@ -174,4 +182,4 @@ if nextHead and #nextHead >= 2 then
   redis.call("ZADD", readyKey, nextScore, groupId)
 end
 
-return id .. "|||" .. groupId .. "|||" .. payload .. "|||" .. attempts .. "|||" .. maxAttempts .. "|||" .. seq .. "|||" .. enq .. "|||" .. orderMs .. "|||" .. score .. "|||" .. deadline
+return id .. "||GROUPMQ||" .. groupId .. "||GROUPMQ||" .. payload .. "||GROUPMQ||" .. attempts .. "||GROUPMQ||" .. maxAttempts .. "||GROUPMQ||" .. seq .. "||GROUPMQ||" .. enq .. "||GROUPMQ||" .. orderMs .. "||GROUPMQ||" .. score .. "||GROUPMQ||" .. deadline

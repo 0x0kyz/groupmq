@@ -1,3 +1,35 @@
+## [1.1.1-next.2-fixes](https://github.com/0x0kyz/groupmq/compare/v1.1.1-next.2...v1.1.1-next.2-fixes) (2025-05-05)
+
+> **Fork notice:** This branch is based on [`v1.1.1-next.2`](https://github.com/Openpanel-dev/groupmq/releases/tag/v1.1.1-next.2) from [Openpanel-dev/groupmq](https://github.com/Openpanel-dev/groupmq).
+> It includes additional bug fixes to address group lifecycle and queue correctness problems.
+
+### Bug Fixes
+
+- **reserve.lua** — fix ready queue removal using `ZREM` by group name instead of `ZREMRANGEBYRANK` by index (index can shift under concurrent access, causing wrong groups to be dequeued)
+- **reserve-batch.lua** — re-add group to ready queue after processing each group in the batch (prevents groups with remaining jobs from being silently dropped); clean up active list and reset job status on stalled detection
+- **complete.lua** — refactor completion logic: remove lock-based approach, use BullMQ-style `groupActiveKey` list; properly clean up empty groups on final job completion
+- **complete-and-reserve-next-with-metadata.lua** — fix race condition: clean up empty group when job is not at head of the active list, preventing ghost groups from lingering in Redis
+- **check-stalled.lua** — clean up empty group keys after a job exceeds max stalled count and is moved to failed
+- **enqueue-batch.lua** — fix delayed and staged jobs being incorrectly added to the group ZSET at enqueue time; only add to group ZSET when a job is immediately ready to process
+- **promote-delayed-jobs.lua** — fix promoted jobs not being added to group ZSET; use `HMGET` to fetch `groupId` and `score` together, add job to group ZSET on promotion, update job status to `waiting`
+- **index.ts** — remove re-export of `groupmq-bullboard-adapter` (not available in this build)
+
+---
+
+## [1.1.1-next.2](https://github.com/Openpanel-dev/groupmq/compare/v1.1.1-next.1...v1.1.1-next.2) (2025-12-09)
+
+
+### Bug Fixes
+
+* blocked groups (try 2) ([5191f8c](https://github.com/Openpanel-dev/groupmq/commit/5191f8c56ed6bd06e0e76fcd4beee05a85218089))
+
+## [1.1.1-next.1](https://github.com/Openpanel-dev/groupmq/compare/v1.1.0...v1.1.1-next.1) (2025-12-08)
+
+
+### Bug Fixes
+
+* ensure no stuck jobs ([66a73f4](https://github.com/Openpanel-dev/groupmq/commit/66a73f49fa542b53d8c675c19b62bcf5cf22cd10))
+
 ## [1.1.0](https://github.com/Openpanel-dev/groupmq/compare/v1.0.0...v1.1.0) (2025-11-26)
 
 

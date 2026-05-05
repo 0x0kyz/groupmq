@@ -717,7 +717,7 @@ export class Queue<T = any> {
 
     if (!raw) return null;
 
-    const parts = raw.split('|||');
+    const parts = raw.split('||GROUPMQ||');
     if (parts.length !== 10) return null;
 
     let data: T;
@@ -857,7 +857,7 @@ export class Queue<T = any> {
       }
 
       // Parse the result (same format as reserve methods)
-      const parts = result.split('|||');
+      const parts = result.split('||GROUPMQ||');
       if (parts.length !== 10) {
         this.logger.error(
           'Queue completeAndReserveNextWithMetadata: unexpected result format:',
@@ -1503,7 +1503,7 @@ export class Queue<T = any> {
     if (!result) return null;
 
     // Parse the delimited string response (same format as regular reserve)
-    const parts = result.split('|||');
+    const parts = result.split('||GROUPMQ||');
     if (parts.length < 10) return null;
 
     const [
@@ -1549,7 +1549,7 @@ export class Queue<T = any> {
     const out: Array<ReservedJob<T>> = [];
     for (const r of results || []) {
       if (!r) continue;
-      const parts = r.split('|||');
+      const parts = r.split('||GROUPMQ||');
       if (parts.length !== 10) continue;
       out.push({
         id: parts[0],
@@ -1794,6 +1794,53 @@ export class Queue<T = any> {
       'waiting-children': 0,
       prioritized: 0,
     };
+  }
+
+  /**
+   * Scan all groups and recover jobs stuck in active lists after ungraceful shutdown.
+   * Call this BEFORE creating workers on startup to clean up ghost entries.
+   *
+   * For each ghost: removes from active list, removes from processing set,
+   * re-queues with 'waiting' status, and restores the group to the ready set.
+   */
+  async recoverActiveJobs(): Promise<number> {
+    const groupsKey = `${this.ns}:groups`;
+    const readyKey = `${this.ns}:ready`;
+    const processingKey = `${this.ns}:processing`;
+    const allGroups = await this.r.smembers(groupsKey);
+    let recovered = 0;
+
+    for (const groupId of allGroups) {
+      const activeKey = `${this.ns}:g:${groupId}:active`;
+      const activeJobs = await this.r.lrange(activeKey, 0, -1);
+      if (activeJobs.length === 0) continue;
+
+      for (const jobId of activeJobs) {
+        const jobKey = `${this.ns}:job:${jobId}`;
+        const score = await this.r.hget(jobKey, 'score');
+
+        await this.r.lrem(activeKey, 0, jobId);
+        await this.r.zrem(processingKey, jobId);
+        await this.r.del(`${this.ns}:processing:${jobId}`);
+
+        if (score) {
+          const groupKey = `${this.ns}:g:${groupId}`;
+          await this.r.zadd(groupKey, Number(score), jobId);
+          await this.r.hset(jobKey, 'status', 'waiting');
+
+          const head = await this.r.zrange(groupKey, 0, 0, 'WITHSCORES');
+          if (head.length >= 2) {
+            await this.r.zadd(readyKey, Number(head[1]), groupId);
+          }
+
+          recovered++;
+          this.logger.info(
+            `Recovered stale active job ${jobId} from group ${groupId}`,
+          );
+        }
+      }
+    }
+    return recovered;
   }
 
   /**
