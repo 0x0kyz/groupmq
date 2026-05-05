@@ -45,6 +45,11 @@ if (now - lastCheck) >= stalledCheckInterval then
             local headScore = tonumber(head[2])
             redis.call("ZADD", readyKey, headScore, gid)
           end
+          -- Clean up active list (BullMQ-style)
+          local groupActiveKey = ns .. ":g:" .. gid .. ":active"
+          redis.call("LREM", groupActiveKey, 1, jobId)
+          -- Reset job status to waiting
+          redis.call("HSET", ns .. ":job:" .. jobId, "status", "waiting")
           redis.call("DEL", ns .. ":lock:" .. gid)
           redis.call("DEL", procKey)
           redis.call("ZREM", processingKey, jobId)
@@ -69,6 +74,48 @@ for i = 1, #groups, 2 do
 
   -- Check if group has no active jobs (BullMQ-style gating)
   local activeCount = redis.call("LLEN", groupActiveKey)
+
+  -- Self-healing: detect and clean up ghost active entries left by ungraceful shutdown
+  if activeCount > 0 then
+    local firstActive = redis.call("LINDEX", groupActiveKey, 0)
+    if firstActive then
+      local isStale = false
+      local procScore = redis.call("ZSCORE", processingKey, firstActive)
+      if not procScore then
+        isStale = true
+      else
+        local sStatus = redis.call("HGET", ns .. ":job:" .. firstActive, "status")
+        if not sStatus or (sStatus ~= "processing" and sStatus ~= "completing") then
+          isStale = true
+        else
+          local deadline = tonumber(procScore)
+          if deadline then
+            local gap = deadline - now
+            local hbThreshold = math.max(30000, math.min(120000, math.floor(vt / 3)))
+            if gap < (vt - hbThreshold) then
+              isStale = true
+            end
+          end
+        end
+      end
+      if isStale then
+        redis.call("DEL", groupActiveKey)
+        local sJobKey = ns .. ":job:" .. firstActive
+        local sScore = redis.call("HGET", sJobKey, "score")
+        if sScore then
+          redis.call("ZADD", gZ, tonumber(sScore), firstActive)
+          redis.call("HSET", sJobKey, "status", "waiting")
+        end
+        redis.call("ZREM", processingKey, firstActive)
+        redis.call("DEL", ns .. ":processing:" .. firstActive)
+        activeCount = 0
+      end
+    else
+      redis.call("DEL", groupActiveKey)
+      activeCount = 0
+    end
+  end
+
   if activeCount == 0 then
     local head = redis.call("ZRANGE", gZ, 0, 0, "WITHSCORES")
     if head and #head >= 2 then
@@ -109,13 +156,6 @@ for i = 1, #groups, 2 do
             redis.call("HSET", procKey, "groupId", gid, "deadlineAt", tostring(deadline))
             redis.call("ZADD", processingKey, deadline, id)
 
-            -- Re-add group if there is a new head job (next oldest)
-            local nextHead = redis.call("ZRANGE", gZ, 0, 0, "WITHSCORES")
-            if nextHead and #nextHead >= 2 then
-              local nextScore = tonumber(nextHead[2])
-              redis.call("ZADD", readyKey, nextScore, gid)
-            end
-
             table.insert(out, id .. "||GROUPMQ||" .. groupId .. "||GROUPMQ||" .. payload .. "||GROUPMQ||" .. attempts .. "||GROUPMQ||" .. maxAttempts .. "||GROUPMQ||" .. seq .. "||GROUPMQ||" .. enq .. "||GROUPMQ||" .. orderMs .. "||GROUPMQ||" .. score .. "||GROUPMQ||" .. deadline)
             table.insert(processedGroups, gid)
           end
@@ -123,12 +163,17 @@ for i = 1, #groups, 2 do
       end
     end
   end
-  -- Note: Groups with active jobs will be skipped
 end
 
--- Remove only the groups that were actually processed from ready queue
+-- For each processed group: remove from ready, then re-add if more jobs exist
 for _, gid in ipairs(processedGroups) do
   redis.call("ZREM", readyKey, gid)
+  local gZ = ns .. ":g:" .. gid
+  local nextHead = redis.call("ZRANGE", gZ, 0, 0, "WITHSCORES")
+  if nextHead and #nextHead >= 2 then
+    local nextScore = tonumber(nextHead[2])
+    redis.call("ZADD", readyKey, nextScore, gid)
+  end
 end
 
 return out

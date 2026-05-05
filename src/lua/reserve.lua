@@ -77,7 +77,6 @@ if not groups or #groups == 0 then
 end
 
 local chosenGid = nil
-local chosenIndex = nil
 local headJobId = nil
 local job = nil
 
@@ -90,6 +89,48 @@ for i = 1, #groups, 2 do
   
   -- Check if group has no active jobs (BullMQ-style gating)
   local activeCount = redis.call("LLEN", groupActiveKey)
+
+  -- Self-healing: detect and clean up ghost active entries left by ungraceful shutdown
+  if activeCount > 0 then
+    local firstActive = redis.call("LINDEX", groupActiveKey, 0)
+    if firstActive then
+      local isStale = false
+      local procScore = redis.call("ZSCORE", processingKey, firstActive)
+      if not procScore then
+        isStale = true
+      else
+        local sStatus = redis.call("HGET", ns .. ":job:" .. firstActive, "status")
+        if not sStatus or (sStatus ~= "processing" and sStatus ~= "completing") then
+          isStale = true
+        else
+          local deadline = tonumber(procScore)
+          if deadline then
+            local gap = deadline - now
+            local hbThreshold = math.max(30000, math.min(120000, math.floor(vt / 3)))
+            if gap < (vt - hbThreshold) then
+              isStale = true
+            end
+          end
+        end
+      end
+      if isStale then
+        redis.call("DEL", groupActiveKey)
+        local sJobKey = ns .. ":job:" .. firstActive
+        local sScore = redis.call("HGET", sJobKey, "score")
+        if sScore then
+          redis.call("ZADD", gZ, tonumber(sScore), firstActive)
+          redis.call("HSET", sJobKey, "status", "waiting")
+        end
+        redis.call("ZREM", processingKey, firstActive)
+        redis.call("DEL", ns .. ":processing:" .. firstActive)
+        activeCount = 0
+      end
+    else
+      redis.call("DEL", groupActiveKey)
+      activeCount = 0
+    end
+  end
+
   if activeCount == 0 then
     -- Check if group has jobs
     local head = redis.call("ZRANGE", gZ, 0, 0, "WITHSCORES")
@@ -112,15 +153,9 @@ for i = 1, #groups, 2 do
           redis.call("LPUSH", groupActiveKey, headJobId)
           
           chosenGid = gid
-          chosenIndex = (i + 1) / 2 - 1
           -- Mark job as processing for accurate stalled detection and idempotency
           redis.call("HSET", headJobKey, "status", "processing")
-          
-          -- CRITICAL: Ensure job is removed from group set (defensive check)
-          -- This handles edge cases where job might still be in group set due to race conditions
-          -- or if ZPOPMIN didn't fully remove it (shouldn't happen, but be safe)
-          redis.call("ZREM", gZ, headJobId)
-          
+
           break
         end
       end
@@ -151,8 +186,8 @@ if not id or id == false then
   return nil
 end
 
--- Remove the group from ready queue
-redis.call("ZREMRANGEBYRANK", readyKey, chosenIndex, chosenIndex)
+-- Remove the chosen group from ready queue by name (not by rank, which can shift)
+redis.call("ZREM", readyKey, chosenGid)
 
 local procKey = ns .. ":processing:" .. id
 local deadline = now + vt
